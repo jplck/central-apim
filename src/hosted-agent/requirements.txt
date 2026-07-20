@@ -1,0 +1,10 @@
+# Pinned to the versions from the Foundry hosted-agents reference sample.
+# This agent uses no tools, but agent_framework_foundry_hosting._responses imports
+# `mcp` unconditionally at module load, so mcp is required even without MCP tools.
+agent-framework-core==1.7.0
+agent-framework-foundry==1.7.0
+agent-framework-foundry-hosting==1.0.0a260528
+azure-ai-agentserver-core==2.0.0b5
+azure-ai-agentserver-responses==1.0.0b7
+mcp>=1.0.0
+azure-identity==1.25.3

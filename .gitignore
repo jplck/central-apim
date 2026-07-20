@@ -1,0 +1,12 @@
+# azd
+.azure/
+
+# agent hook venv
+infra/hooks/.venv/
+
+# python
+__pycache__/
+*.pyc
+
+# compiled bicep (azd compiles infra/main.bicep itself)
+infra/main.json

@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: foundry-apim-model-gateway
+metadata:
+  template: foundry-apim-model-gateway@1.0.0
+# Infra-only sample: no app services. `azd up` runs provisioning only.
+infra:
+  provider: bicep
+  path: infra
+  module: main
+hooks:
+  # After provisioning, create the smoke-test prompt agent in each consumer project.
+  postprovision:
+    posix:
+      shell: sh
+      run: ./infra/hooks/create-agents.sh
