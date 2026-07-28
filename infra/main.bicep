@@ -29,6 +29,9 @@ param enableHostedAgents bool = true
 @description('Which consumers get a hosted-agent capability host. Public hosting environments are capped per subscription+region (provisioning a 2nd deadlocks), so default to the first consumer only. Every consumer still consumes the central model via APIM.')
 param hostedAgentConsumers array = take(consumers, 1)
 
+@description('Provision an Azure Databricks workspace for a Genie agent that Microsoft Agent 365 ingests via external Registry sync ("Databricks Genie"). Off by default: the Genie space is UI-authored and the sync needs a Databricks service principal + Agent 365 licensing (see README). Enabling deploys a Premium workspace, which is free until a SQL warehouse runs.')
+param enableDatabricks bool = false
+
 var token = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
 
@@ -40,6 +43,12 @@ resource rgProvider 'Microsoft.Resources/resourceGroups@2024-03-01' = {
 
 resource rgConsumers 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: 'rg-${environmentName}-consumers'
+  location: location
+  tags: tags
+}
+
+resource rgDatabricks 'Microsoft.Resources/resourceGroups@2024-03-01' = if (enableDatabricks) {
+  name: 'rg-${environmentName}-databricks'
   location: location
   tags: tags
 }
@@ -100,6 +109,17 @@ module consumers_ 'consumers.bicep' = {
   }
 }
 
+// 4. Optional: Azure Databricks workspace for a Genie agent that Microsoft Agent 365
+//    syncs via external Registry sync ("Databricks Genie"). Only the workspace is
+//    provisioned here; the SQL warehouse + Genie space are authored in the workspace
+//    (Genie spaces are UI-only — no create API), the sync service principal is created
+//    with the Databricks CLI, and the Agent 365 connection is a manual admin-center
+//    step. See the README "Databricks Genie + Agent 365" runbook.
+module databricks 'databricks.bicep' = if (enableDatabricks) {
+  scope: rgDatabricks
+  params: { location: location, token: token, tags: tags }
+}
+
 output PROVIDER_FOUNDRY_NAME string = provider.outputs.foundryName
 output PROVIDER_FOUNDRY_ENDPOINT string = provider.outputs.foundryEndpoint
 output APIM_NAME string = provider.outputs.apimName
@@ -121,3 +141,9 @@ output HOSTED_AGENT_NAME string = 'gateway-hosted'
 // Only the consumers that actually got a capability host (subset) — the hosted-agent hook targets these.
 output HOSTED_AGENT_PROJECT_ENDPOINTS array = enableHostedAgents ? consumers_.outputs.hostedProjectEndpoints : []
 output HOSTED_AGENT_PROJECT_RESOURCE_IDS array = enableHostedAgents ? consumers_.outputs.hostedProjectResourceIds : []
+
+// Databricks (optional): workspace for a Genie agent that Agent 365 syncs. Empty unless enableDatabricks.
+#disable-next-line BCP318 // guarded by enableDatabricks; the workspace is deployed whenever this is read.
+output DATABRICKS_WORKSPACE_URL string = enableDatabricks ? databricks.outputs.workspaceUrl : ''
+#disable-next-line BCP318
+output DATABRICKS_WORKSPACE_ID string = enableDatabricks ? databricks.outputs.workspaceId : ''

@@ -184,6 +184,67 @@ here's the assessment:
   If you prefer the native experience, deploy this template first, then in the Foundry portal add
   an AI Gateway on **A** and reuse the APIM instance created here (Standard v2, same sub/tenant → eligible).
 
+## Databricks Genie agent + Microsoft Agent 365
+
+Microsoft **Agent 365** has an external **Registry sync** (M365 admin center, preview) that
+pulls agents from other platforms into its registry. The supported platforms are Amazon
+Bedrock, Google Vertex AI, Salesforce Agentforce, and **Databricks Genie** — so the Databricks
+integration is specifically a **Genie space** (conversational analytics agent), *not* an
+arbitrary Model Serving / custom agent.
+
+This sample adds the Azure side (an Azure Databricks workspace) and a runbook to expose a Genie
+agent and register it in Agent 365. It's **off by default** (`enableDatabricks=false`).
+
+**What Bicep provisions** (`infra/databricks.bicep`, when `enableDatabricks=true`):
+a Premium Azure Databricks **workspace** in `rg-<env>-databricks`, all-public. That's it — the
+workspace resource is **free**; you only pay when a SQL warehouse runs (see cost note). Output:
+`DATABRICKS_WORKSPACE_URL`.
+
+**Why the rest is a runbook, not IaC:** Genie spaces are **UI-authored — there is no create
+API**; the sync authenticates with a **Databricks service principal**; and the Agent 365
+connection is a **licensed admin-center action**. None of those are ARM/Bicep resources, so the
+template stops at the workspace (same "provision the shell, configure the platform out-of-band"
+split as the hosted agents).
+
+### Runbook
+
+1. **Deploy the workspace.** Add `"enableDatabricks": { "value": true }` to the `parameters`
+   block of `infra/main.parameters.json` (a literal JSON bool — no env-var typing pitfalls),
+   then `azd up`. Note the `DATABRICKS_WORKSPACE_URL` output.
+2. **Create a cheap serverless SQL warehouse** (Genie needs one; auto-stops when idle):
+   ```bash
+   databricks auth login --host "$DATABRICKS_WORKSPACE_URL"
+   databricks warehouses create --json '{
+     "name": "genie-wh", "warehouse_type": "PRO", "enable_serverless_compute": true,
+     "cluster_size": "2X-Small", "auto_stop_mins": 5 }'
+   ```
+3. **Create the Genie space (UI).** In the workspace: **Genie → New** → pick the warehouse from
+   step 2 → add the built-in **`samples`** catalog (e.g. `samples.nyctaxi.trips`) as its data →
+   save. Using `samples` means **no storage account or table to create**. Ask it a question to
+   confirm it answers.
+4. **Create the service principal Agent 365 authenticates with** (needs a client id + secret;
+   easiest is an Entra app added to the workspace, then give it workspace admin):
+   ```bash
+   databricks service-principals create --json '{"displayName":"agent365-sync","active":true}'
+   # add its application id to the workspace "admins" group, then create an OAuth secret for it
+   # (account admin): databricks account service-principal-secrets create --service-principal-id <id>
+   ```
+5. **Register in Agent 365.** M365 admin center → **Agents → All Agents → Registry sync →
+   Manage → + Connect a platform** → select **Databricks Genie** → enter the **Workspace URL**
+   and the SP **Client ID / Client Secret** → **Validate** → **Save** → **Sync agents**. The
+   Genie space now appears in the Agent 365 registry.
+
+> **Keyless note:** the Azure side stays keyless — the workspace is public and holds no keys, and
+> there is **no Databricks→APIM model tie-in** (every documented path for that needs a static
+> secret in a Databricks secret scope, which your "no access keys" rule forbids, so it's
+> deliberately left out). The **one** unavoidable credential is the **Databricks** service
+> principal secret in step 4 — the Agent 365 connector requires it, and it's a Databricks
+> credential, not an Azure access key. Requires an Agent 365 license (E5/E7 or add-on).
+
+> **Cost:** the workspace is free; a **2X-Small serverless SQL warehouse** is roughly
+> **~$3–6/hr while actively querying** and **$0 idle** (the `auto_stop_mins: 5` above). Over
+> `samples` there's no storage cost. Expect a couple of dollars for a demo session.
+
 ## Notes / assumptions
 
 - **Account-level connection**: created on the account (`accounts/connections`) with
