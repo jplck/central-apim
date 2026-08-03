@@ -216,7 +216,7 @@ split as the hosted agents).
    databricks auth login --host "$DATABRICKS_WORKSPACE_URL"
    databricks warehouses create --json '{
      "name": "genie-wh", "warehouse_type": "PRO", "enable_serverless_compute": true,
-     "cluster_size": "2X-Small", "auto_stop_mins": 5 }'
+     "cluster_size": "2X-Small", "auto_stop_mins": 5, "max_num_clusters": 1 }'
    ```
 3. **Create the Genie space (UI).** In the workspace: **Genie → New** → pick the warehouse from
    step 2 → add the built-in **`samples`** catalog (e.g. `samples.nyctaxi.trips`) as its data →
