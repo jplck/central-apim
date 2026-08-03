@@ -245,6 +245,34 @@ split as the hosted agents).
 > **~$3–6/hr while actively querying** and **$0 idle** (the `auto_stop_mins: 5` above). Over
 > `samples` there's no storage cost. Expect a couple of dollars for a demo session.
 
+## Demo: energy customer-profile MCP server (Container Apps)
+
+A tiny custom **MCP server** on Azure Container Apps that returns **fake** energy customer +
+meter data for **5 demo customers** — for wiring MCP tools into an agent without a real
+back end. **On by default** (`enableMcp=true`); set it to `false` to skip.
+
+- **App** (`src/mcp-energy/`): ~70 lines of [FastMCP](https://modelcontextprotocol.io) over
+  Streamable HTTP (`/mcp`, port 8000). All data lives in `src/mcp-energy/data.json` — no DB,
+  no auth, read-only. Tools:
+
+  | Tool | Args | Returns |
+  |------|------|---------|
+  | `get_customer_profile` | `customer_id` | name, address, tariff, meter list |
+  | `list_meters` | `customer_id` | electricity/gas meters |
+  | `get_meter_readings` | `meter_id`, `start?`, `end?` | daily readings (ISO date-range filter) |
+  | `get_consumption_summary` | `customer_id`, `period=month\|year` | pre-aggregated totals/cost |
+
+  Demo IDs: `C-1001`…`C-1005`. Run locally: `cd src/mcp-energy && pip install -r requirements.txt && python server.py` (selftest: `python server.py selftest`).
+
+- **Infra** (`infra/mcp.bicep`, provider RG): self-contained and keyless — its own **ACR**,
+  user-assigned identity (**AcrPull**), Container Apps environment + Log Analytics, and the
+  container app. Provisioned with a placeholder image on port 80 so the first revision is
+  healthy.
+- **Deploy** (`infra/hooks/deploy_mcp.py`): the postprovision hook builds `src/mcp-energy`
+  into the ACR via ARM REST as the **azd** identity (no `az` CLI), then swaps the real image
+  and target port 8000 onto the app. The live URL is the `MCP_URI` output
+  (`https://<app>.<region>.azurecontainerapps.io/mcp`).
+
 ## Notes / assumptions
 
 - **Account-level connection**: created on the account (`accounts/connections`) with

@@ -23,3 +23,9 @@ python "$HOOK_DIR/create_agents.py"
 if [ -n "${ACR_NAME:-}" ]; then
   python "$HOOK_DIR/create_hosted_agents.py"
 fi
+
+# Demo MCP server: build src/mcp-energy into its ACR and swap it onto the container
+# app. Only when the MCP module was provisioned (MCP_APP_ID output set).
+if [ -n "${MCP_APP_ID:-}" ]; then
+  python "$HOOK_DIR/deploy_mcp.py"
+fi

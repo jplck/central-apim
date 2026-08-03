@@ -32,6 +32,9 @@ param hostedAgentConsumers array = take(consumers, 1)
 @description('Provision an Azure Databricks workspace for a Genie agent that Microsoft Agent 365 ingests via external Registry sync ("Databricks Genie"). Off by default: the Genie space is UI-authored and the sync needs a Databricks service principal + Agent 365 licensing (see README). Enabling deploys a Premium workspace, which is free until a SQL warehouse runs.')
 param enableDatabricks bool = false
 
+@description('Deploy the demo "energy customer-profile" MCP server on Azure Container Apps (self-contained: own registry, identity, environment). The postprovision hook builds the image and swaps it onto the app. See README.')
+param enableMcp bool = true
+
 var token = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
 
@@ -120,6 +123,14 @@ module databricks 'databricks.bicep' = if (enableDatabricks) {
   params: { location: location, token: token, tags: tags }
 }
 
+// 5. Optional demo: an energy customer-profile MCP server on Container Apps. Self-contained
+//    (own ACR + identity + environment) in the provider RG. Provisioned with a placeholder
+//    image; the postprovision hook builds src/mcp-energy into the ACR and swaps it onto the app.
+module mcp 'mcp.bicep' = if (enableMcp) {
+  scope: rgProvider
+  params: { location: location, token: token, tags: tags }
+}
+
 output PROVIDER_FOUNDRY_NAME string = provider.outputs.foundryName
 output PROVIDER_FOUNDRY_ENDPOINT string = provider.outputs.foundryEndpoint
 output APIM_NAME string = provider.outputs.apimName
@@ -147,3 +158,13 @@ output HOSTED_AGENT_PROJECT_RESOURCE_IDS array = enableHostedAgents ? consumers_
 output DATABRICKS_WORKSPACE_URL string = enableDatabricks ? databricks.outputs.workspaceUrl : ''
 #disable-next-line BCP318
 output DATABRICKS_WORKSPACE_ID string = enableDatabricks ? databricks.outputs.workspaceId : ''
+
+// MCP demo (optional): the deploy hook reads these to build the image and swap it onto the app.
+#disable-next-line BCP318 // guarded by enableMcp; the module is deployed whenever these are read.
+output MCP_ACR_ID string = enableMcp ? mcp.outputs.acrId : ''
+#disable-next-line BCP318
+output MCP_ACR_LOGIN_SERVER string = enableMcp ? mcp.outputs.acrLoginServer : ''
+#disable-next-line BCP318
+output MCP_APP_ID string = enableMcp ? mcp.outputs.appId : ''
+#disable-next-line BCP318
+output MCP_URI string = enableMcp ? mcp.outputs.uri : ''

@@ -1,0 +1,2 @@
+# FastMCP + streamable-http transport. Pin <2: mcp 2.x dropped FastMCP for a new MCPServer API.
+mcp>=1.9,<2
