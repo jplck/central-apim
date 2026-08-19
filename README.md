@@ -294,9 +294,9 @@ default**; enable with `azd env set ENABLE_PROXY true` before `azd up`.
   so you can edit the list from the CLI.
 - **Gateway** (`infra/provider.bicep`): the APIM API policy reads the caller's `appid` from the
   validated token and, when armed, does a synchronous `send-request` to the proxy's `/check`.
-  Non-`allow` (or any proxy error / timeout) → **403**. The `governance-proxy-url` named value
-  defaults to `none`, so the whole block is **skipped** (zero overhead) unless the proxy is
-  deployed; the `deploy_proxy.py` postprovision hook arms it with the live URL.
+  Non-`allow` (or any proxy error / timeout) → **403**. The `governance-proxy-host` named value
+  defaults to a non-resolving sentinel, so the whole block is **skipped** (zero overhead) unless
+  the proxy is deployed; the `deploy_proxy.py` postprovision hook arms it with the live host.
 
 **Kill a consumer** (e.g. consumer B) — takes effect within ~10s, no redeploy:
 
