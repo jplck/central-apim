@@ -25,12 +25,12 @@ APIM_API = "2024-05-01"
 
 def _set_named_value(cred, proxy_url: str) -> None:
     """Point APIM's `governance-proxy-url` named value at the proxy. Empty inputs -> skip
-    (the policy stays inert at its 'none' default, so the gateway is unaffected)."""
+    (the policy stays inert at its disabled-sentinel default, so the gateway is unaffected)."""
     sub = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
     env = os.environ.get("AZURE_ENV_NAME", "").strip()
     apim = os.environ.get("APIM_NAME", "").strip()
     if not (sub and env and apim and proxy_url):
-        print("[proxy] APIM/proxy outputs missing; leaving kill-switch named value at 'none'.", flush=True)
+        print("[proxy] APIM/proxy outputs missing; leaving kill-switch named value disabled.", flush=True)
         return
     rg = f"rg-{env}-provider"
     url = (f"{d.ARM}/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ApiManagement"

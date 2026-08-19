@@ -86,20 +86,23 @@ var allowedAppIds = join(map(consumerClientIds, id => '<application-id>${id}</ap
 
 // Phase 1 kill switch (proxy.md): after validating the caller, ask the governance proxy whether
 // this caller's Entra appid is revoked, and fail closed (403) on deny / non-200 / unreachable.
-// Inert until the proxy deploy hook points the `governance-proxy-url` named value at the proxy
-// (default 'none' => the whole block is skipped, so the gateway is unchanged and has zero overhead).
-var killSwitchXml = '<set-variable name="agentId" value="@{ var jwt = context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;).Replace(&quot;Bearer &quot;, &quot;&quot;).AsJwt(); return jwt == null ? &quot;unknown&quot; : jwt.Claims.GetValueOrDefault(&quot;appid&quot;, jwt.Claims.GetValueOrDefault(&quot;azp&quot;, &quot;unknown&quot;)); }" /><choose><when condition="@(&quot;{{governance-proxy-url}}&quot; != &quot;none&quot;)"><send-request mode="new" response-variable-name="killResp" timeout="5" ignore-error="true"><set-url>{{governance-proxy-url}}/check</set-url><set-method>POST</set-method><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>@{ return new JObject(new JProperty("agent_id", (string)context.Variables["agentId"])).ToString(); }</set-body></send-request><choose><when condition="@{ var r = context.Variables.GetValueOrDefault&lt;IResponse&gt;(&quot;killResp&quot;); if (r == null || r.StatusCode != 200) { return true; } try { return ((string)r.Body.As&lt;JObject&gt;(true)[&quot;verdict&quot;]) != &quot;allow&quot;; } catch { return true; } }"><return-response><set-status code="403" reason="Forbidden" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"error":"agent revoked or governance proxy unavailable"}</set-body></return-response></when></choose></when></choose>'
+// Inert until the proxy deploy hook points the `governance-proxy-url` named value at the proxy.
+// Default is a non-resolving sentinel URL (RFC 2606 `.invalid`) => the guard skips the whole
+// block, so the gateway is unchanged and has zero overhead. It must be a *valid absolute URL*
+// because APIM statically validates <set-url> even inside a <choose> that never runs.
+var killSwitchXml = '<set-variable name="agentId" value="@{ var jwt = context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;).Replace(&quot;Bearer &quot;, &quot;&quot;).AsJwt(); return jwt == null ? &quot;unknown&quot; : jwt.Claims.GetValueOrDefault(&quot;appid&quot;, jwt.Claims.GetValueOrDefault(&quot;azp&quot;, &quot;unknown&quot;)); }" /><choose><when condition="@(&quot;{{governance-proxy-url}}&quot; != &quot;https://disabled.invalid&quot;)"><send-request mode="new" response-variable-name="killResp" timeout="5" ignore-error="true"><set-url>{{governance-proxy-url}}/check</set-url><set-method>POST</set-method><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>@{ return new JObject(new JProperty("agent_id", (string)context.Variables["agentId"])).ToString(); }</set-body></send-request><choose><when condition="@{ var r = context.Variables.GetValueOrDefault&lt;IResponse&gt;(&quot;killResp&quot;); if (r == null || r.StatusCode != 200) { return true; } try { return ((string)r.Body.As&lt;JObject&gt;(true)[&quot;verdict&quot;]) != &quot;allow&quot;; } catch { return true; } }"><return-response><set-status code="403" reason="Forbidden" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"error":"agent revoked or governance proxy unavailable"}</set-body></return-response></when></choose></when></choose>'
 
 var apiPolicyXml = '<policies><inbound><base /><validate-azure-ad-token tenant-id="${tenant().tenantId}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. A valid Entra token from an allowed Foundry resource is required."><client-application-ids>${allowedAppIds}</client-application-ids><audiences><audience>https://cognitiveservices.azure.com</audience></audiences></validate-azure-ad-token>${killSwitchXml}<authentication-managed-identity resource="https://cognitiveservices.azure.com" /><set-backend-service base-url="${foundryA.properties.endpoint}openai" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
 
-// The proxy URL the kill switch calls. Default 'none' keeps the switch off; the proxy deploy
-// hook (deploy_proxy.py) sets this to the live proxy URL when enableProxy provisions it.
+// The proxy URL the kill switch calls. Default is a non-resolving sentinel (`.invalid`) that
+// keeps the switch off; the proxy deploy hook (deploy_proxy.py) sets this to the live proxy URL
+// when enableProxy provisions it. Must be a valid absolute URL (APIM validates <set-url>).
 resource proxyUrlNv 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
   parent: apim
   name: 'governance-proxy-url'
   properties: {
     displayName: 'governance-proxy-url'
-    value: 'none'
+    value: 'https://disabled.invalid'
     secret: false
   }
 }
