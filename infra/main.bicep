@@ -35,6 +35,9 @@ param enableDatabricks bool = false
 @description('Deploy the demo "energy customer-profile" MCP server on Azure Container Apps (self-contained: own registry, identity, environment). The postprovision hook builds the image and swaps it onto the app. See README.')
 param enableMcp bool = true
 
+@description('Deploy Phase 1 of the governance proxy (proxy.md): a Container App (ACS host) that APIM calls synchronously to enforce a dynamic, data-driven kill switch, plus the Azure App Configuration store it reads revocations from. Self-contained and off by default; the proxy image is swapped on by a later hook.')
+param enableProxy bool = false
+
 var token = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
 
@@ -131,6 +134,14 @@ module mcp 'mcp.bicep' = if (enableMcp) {
   params: { location: location, token: token, tags: tags }
 }
 
+// 6. Optional Phase 1 of proxy.md: the governance-proxy Container App (an ACS host) + the
+//    Azure App Configuration revocation store it reads. Self-contained in the provider RG,
+//    provisioned with a placeholder image; a later hook builds the proxy image and swaps it on.
+module proxy 'proxy.bicep' = if (enableProxy) {
+  scope: rgProvider
+  params: { location: location, token: token, tags: tags, deployerPrincipalId: principalId }
+}
+
 output PROVIDER_FOUNDRY_NAME string = provider.outputs.foundryName
 output PROVIDER_FOUNDRY_ENDPOINT string = provider.outputs.foundryEndpoint
 output APIM_NAME string = provider.outputs.apimName
@@ -168,3 +179,18 @@ output MCP_ACR_LOGIN_SERVER string = enableMcp ? mcp.outputs.acrLoginServer : ''
 output MCP_APP_ID string = enableMcp ? mcp.outputs.appId : ''
 #disable-next-line BCP318
 output MCP_URI string = enableMcp ? mcp.outputs.uri : ''
+
+// Governance proxy (optional, Phase 1): App Config store to write kills into, and the proxy
+// app the later image-swap hook targets.
+#disable-next-line BCP318 // guarded by enableProxy; the module is deployed whenever these are read.
+output PROXY_APP_CONFIG_NAME string = enableProxy ? proxy.outputs.appConfigName : ''
+#disable-next-line BCP318
+output PROXY_APP_CONFIG_ENDPOINT string = enableProxy ? proxy.outputs.appConfigEndpoint : ''
+#disable-next-line BCP318
+output PROXY_ACR_ID string = enableProxy ? proxy.outputs.acrId : ''
+#disable-next-line BCP318
+output PROXY_ACR_LOGIN_SERVER string = enableProxy ? proxy.outputs.acrLoginServer : ''
+#disable-next-line BCP318
+output PROXY_APP_ID string = enableProxy ? proxy.outputs.appId : ''
+#disable-next-line BCP318
+output PROXY_URI string = enableProxy ? proxy.outputs.uri : ''
