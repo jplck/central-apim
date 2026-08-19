@@ -23,3 +23,12 @@ python "$HOOK_DIR/create_agents.py"
 if [ -n "${ACR_NAME:-}" ]; then
   python "$HOOK_DIR/create_hosted_agents.py"
 fi
+
+# Demo MCP server: build src/mcp-energy into its ACR and swap it onto the container
+# app. Only when the MCP module was provisioned (MCP_APP_ID output set).
+if [ -n "${MCP_APP_ID:-}" ]; then
+  python "$HOOK_DIR/deploy_mcp.py"
+  # Then register it with Agent 365 (BYO MCP): evaluate + NoAuth registration. Opt-in via
+  # ENABLE_A365_MCP_REGISTER and non-fatal by default — see mcp_tools_a365.md.
+  sh "$HOOK_DIR/register_mcp_a365.sh"
+fi

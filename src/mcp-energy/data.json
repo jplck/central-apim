@@ -1,0 +1,181 @@
+{
+  "provider": "Genergy (demo)",
+  "currency": "GBP",
+  "customers": {
+    "C-1001": {
+      "profile": {
+        "customer_id": "C-1001",
+        "name": "Ada Lovelace",
+        "address": "12 Analytical Way, London, EC1A 1BB",
+        "account_no": "GN-77120001",
+        "tariff_name": "Fixed Saver 12M",
+        "status": "active",
+        "meter_ids": ["E-4471001", "G-8831001"]
+      },
+      "meters": [
+        { "meter_id": "E-4471001", "type": "electricity", "serial": "MPAN-1900011234501", "unit": "kWh", "install_date": "2021-03-14" },
+        { "meter_id": "G-8831001", "type": "gas", "serial": "MPRN-742100199", "unit": "m3", "install_date": "2021-03-14" }
+      ],
+      "readings": {
+        "E-4471001": [
+          { "timestamp": "2026-07-25", "consumption": 9.8, "unit": "kWh" },
+          { "timestamp": "2026-07-26", "consumption": 10.4, "unit": "kWh" },
+          { "timestamp": "2026-07-27", "consumption": 8.9, "unit": "kWh" },
+          { "timestamp": "2026-07-28", "consumption": 11.2, "unit": "kWh" },
+          { "timestamp": "2026-07-29", "consumption": 12.6, "unit": "kWh" },
+          { "timestamp": "2026-07-30", "consumption": 10.1, "unit": "kWh" },
+          { "timestamp": "2026-07-31", "consumption": 9.5, "unit": "kWh" }
+        ],
+        "G-8831001": [
+          { "timestamp": "2026-07-25", "consumption": 1.9, "unit": "m3" },
+          { "timestamp": "2026-07-26", "consumption": 2.1, "unit": "m3" },
+          { "timestamp": "2026-07-27", "consumption": 1.7, "unit": "m3" },
+          { "timestamp": "2026-07-28", "consumption": 2.4, "unit": "m3" },
+          { "timestamp": "2026-07-29", "consumption": 2.0, "unit": "m3" },
+          { "timestamp": "2026-07-30", "consumption": 1.8, "unit": "m3" },
+          { "timestamp": "2026-07-31", "consumption": 1.6, "unit": "m3" }
+        ]
+      },
+      "summary": {
+        "month": { "total_kwh": 309.4, "cost_estimate": 88.15, "avg_daily": 10.3, "peak_day": "2026-07-29", "vs_prev_period_pct": -4.2 },
+        "year": { "total_kwh": 3720.0, "cost_estimate": 1060.20, "avg_daily": 10.2, "peak_day": "2026-01-18", "vs_prev_period_pct": -6.1 }
+      }
+    },
+    "C-1002": {
+      "profile": {
+        "customer_id": "C-1002",
+        "name": "Alan Turing",
+        "address": "5 Enigma Court, Manchester, M1 4AB",
+        "account_no": "GN-77120002",
+        "tariff_name": "Standard Variable",
+        "status": "active",
+        "meter_ids": ["E-4471002"]
+      },
+      "meters": [
+        { "meter_id": "E-4471002", "type": "electricity", "serial": "MPAN-1900022345602", "unit": "kWh", "install_date": "2019-11-02" }
+      ],
+      "readings": {
+        "E-4471002": [
+          { "timestamp": "2026-07-25", "consumption": 6.1, "unit": "kWh" },
+          { "timestamp": "2026-07-26", "consumption": 5.8, "unit": "kWh" },
+          { "timestamp": "2026-07-27", "consumption": 6.4, "unit": "kWh" },
+          { "timestamp": "2026-07-28", "consumption": 7.0, "unit": "kWh" },
+          { "timestamp": "2026-07-29", "consumption": 6.7, "unit": "kWh" },
+          { "timestamp": "2026-07-30", "consumption": 5.5, "unit": "kWh" },
+          { "timestamp": "2026-07-31", "consumption": 6.2, "unit": "kWh" }
+        ]
+      },
+      "summary": {
+        "month": { "total_kwh": 189.7, "cost_estimate": 62.40, "avg_daily": 6.3, "peak_day": "2026-07-28", "vs_prev_period_pct": 2.8 },
+        "year": { "total_kwh": 2280.0, "cost_estimate": 749.30, "avg_daily": 6.2, "peak_day": "2026-02-03", "vs_prev_period_pct": 1.1 }
+      }
+    },
+    "C-1003": {
+      "profile": {
+        "customer_id": "C-1003",
+        "name": "Grace Hopper",
+        "address": "88 Compiler Road, Bristol, BS1 5TR",
+        "account_no": "GN-77120003",
+        "tariff_name": "Green Fixed 24M",
+        "status": "active",
+        "meter_ids": ["E-4471003", "G-8831003"]
+      },
+      "meters": [
+        { "meter_id": "E-4471003", "type": "electricity", "serial": "MPAN-1900033456703", "unit": "kWh", "install_date": "2022-06-30" },
+        { "meter_id": "G-8831003", "type": "gas", "serial": "MPRN-742300377", "unit": "m3", "install_date": "2022-06-30" }
+      ],
+      "readings": {
+        "E-4471003": [
+          { "timestamp": "2026-07-25", "consumption": 13.5, "unit": "kWh" },
+          { "timestamp": "2026-07-26", "consumption": 14.2, "unit": "kWh" },
+          { "timestamp": "2026-07-27", "consumption": 12.8, "unit": "kWh" },
+          { "timestamp": "2026-07-28", "consumption": 15.1, "unit": "kWh" },
+          { "timestamp": "2026-07-29", "consumption": 16.0, "unit": "kWh" },
+          { "timestamp": "2026-07-30", "consumption": 13.9, "unit": "kWh" },
+          { "timestamp": "2026-07-31", "consumption": 14.6, "unit": "kWh" }
+        ],
+        "G-8831003": [
+          { "timestamp": "2026-07-25", "consumption": 0.9, "unit": "m3" },
+          { "timestamp": "2026-07-26", "consumption": 1.1, "unit": "m3" },
+          { "timestamp": "2026-07-27", "consumption": 0.8, "unit": "m3" },
+          { "timestamp": "2026-07-28", "consumption": 1.0, "unit": "m3" },
+          { "timestamp": "2026-07-29", "consumption": 1.2, "unit": "m3" },
+          { "timestamp": "2026-07-30", "consumption": 0.7, "unit": "m3" },
+          { "timestamp": "2026-07-31", "consumption": 0.9, "unit": "m3" }
+        ]
+      },
+      "summary": {
+        "month": { "total_kwh": 434.8, "cost_estimate": 121.75, "avg_daily": 14.5, "peak_day": "2026-07-29", "vs_prev_period_pct": 5.6 },
+        "year": { "total_kwh": 5210.0, "cost_estimate": 1459.00, "avg_daily": 14.3, "peak_day": "2026-12-22", "vs_prev_period_pct": 3.4 }
+      }
+    },
+    "C-1004": {
+      "profile": {
+        "customer_id": "C-1004",
+        "name": "Nikola Tesla",
+        "address": "1 Induction Street, Leeds, LS1 2QW",
+        "account_no": "GN-77120004",
+        "tariff_name": "EV Nights",
+        "status": "active",
+        "meter_ids": ["E-4471004"]
+      },
+      "meters": [
+        { "meter_id": "E-4471004", "type": "electricity", "serial": "MPAN-1900044567804", "unit": "kWh", "install_date": "2023-01-20" }
+      ],
+      "readings": {
+        "E-4471004": [
+          { "timestamp": "2026-07-25", "consumption": 28.4, "unit": "kWh" },
+          { "timestamp": "2026-07-26", "consumption": 31.9, "unit": "kWh" },
+          { "timestamp": "2026-07-27", "consumption": 24.7, "unit": "kWh" },
+          { "timestamp": "2026-07-28", "consumption": 35.2, "unit": "kWh" },
+          { "timestamp": "2026-07-29", "consumption": 33.1, "unit": "kWh" },
+          { "timestamp": "2026-07-30", "consumption": 29.8, "unit": "kWh" },
+          { "timestamp": "2026-07-31", "consumption": 30.5, "unit": "kWh" }
+        ]
+      },
+      "summary": {
+        "month": { "total_kwh": 921.5, "cost_estimate": 193.50, "avg_daily": 30.7, "peak_day": "2026-07-28", "vs_prev_period_pct": 8.9 },
+        "year": { "total_kwh": 11060.0, "cost_estimate": 2322.60, "avg_daily": 30.3, "peak_day": "2026-01-09", "vs_prev_period_pct": 12.5 }
+      }
+    },
+    "C-1005": {
+      "profile": {
+        "customer_id": "C-1005",
+        "name": "Marie Curie",
+        "address": "226 Radium Avenue, Cardiff, CF10 3AT",
+        "account_no": "GN-77120005",
+        "tariff_name": "Fixed Saver 12M",
+        "status": "pending_move_in",
+        "meter_ids": ["E-4471005", "G-8831005"]
+      },
+      "meters": [
+        { "meter_id": "E-4471005", "type": "electricity", "serial": "MPAN-1900055678905", "unit": "kWh", "install_date": "2020-09-09" },
+        { "meter_id": "G-8831005", "type": "gas", "serial": "MPRN-742500511", "unit": "m3", "install_date": "2020-09-09" }
+      ],
+      "readings": {
+        "E-4471005": [
+          { "timestamp": "2026-07-25", "consumption": 7.7, "unit": "kWh" },
+          { "timestamp": "2026-07-26", "consumption": 8.3, "unit": "kWh" },
+          { "timestamp": "2026-07-27", "consumption": 7.1, "unit": "kWh" },
+          { "timestamp": "2026-07-28", "consumption": 9.0, "unit": "kWh" },
+          { "timestamp": "2026-07-29", "consumption": 8.6, "unit": "kWh" },
+          { "timestamp": "2026-07-30", "consumption": 7.9, "unit": "kWh" },
+          { "timestamp": "2026-07-31", "consumption": 8.1, "unit": "kWh" }
+        ],
+        "G-8831005": [
+          { "timestamp": "2026-07-25", "consumption": 2.6, "unit": "m3" },
+          { "timestamp": "2026-07-26", "consumption": 2.9, "unit": "m3" },
+          { "timestamp": "2026-07-27", "consumption": 2.3, "unit": "m3" },
+          { "timestamp": "2026-07-28", "consumption": 3.1, "unit": "m3" },
+          { "timestamp": "2026-07-29", "consumption": 2.7, "unit": "m3" },
+          { "timestamp": "2026-07-30", "consumption": 2.4, "unit": "m3" },
+          { "timestamp": "2026-07-31", "consumption": 2.5, "unit": "m3" }
+        ]
+      },
+      "summary": {
+        "month": { "total_kwh": 247.6, "cost_estimate": 70.55, "avg_daily": 8.3, "peak_day": "2026-07-28", "vs_prev_period_pct": 0.0 },
+        "year": { "total_kwh": 2970.0, "cost_estimate": 846.10, "avg_daily": 8.1, "peak_day": "2026-02-14", "vs_prev_period_pct": -1.9 }
+      }
+    }
+  }
+}
