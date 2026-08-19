@@ -151,6 +151,9 @@ output CONNECTION_NAME string = consumers_.outputs.connectionName
 // Use this as the agent model: <connection-name>/<model-name>
 output AGENT_MODEL_DEPLOYMENT_NAME string = '${consumers_.outputs.connectionName}/${provider.outputs.modelName}'
 output CONSUMER_PROJECT_ENDPOINTS array = consumers_.outputs.projectEndpoints
+// Consumer Entra appids (managed-identity client ids) the gateway accepts; index 0 = B, 1 = C.
+// These are the values you revoke via the governance-proxy kill switch (App Config `revocations`).
+output CONSUMER_CLIENT_IDS array = identities.outputs.clientIds
 // Hosted (containerized) agents: shared registry + per-project ARM ids for the deploy hook.
 output CONSUMER_PROJECT_RESOURCE_IDS array = consumers_.outputs.projectResourceIds
 #disable-next-line BCP318 // guarded by enableHostedAgents; acr is deployed whenever this is read.

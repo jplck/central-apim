@@ -1,0 +1,5 @@
+# Governance proxy (proxy.md Phase 1): FastAPI decision service on port 8080.
+fastapi>=0.110
+uvicorn>=0.29
+azure-appconfiguration>=1.5
+azure-identity>=1.16

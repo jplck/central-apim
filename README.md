@@ -278,6 +278,44 @@ back end. **On by default** (`enableMcp=true`); set it to `false` to skip.
   `a365` ≥1.1.165-preview + `az login`. Full plan and the EntraOAuth hardening path:
   [`mcp_tools_a365.md`](mcp_tools_a365.md).
 
+## Demo: dynamic kill switch (governance proxy) — Phase 1
+
+Revoke any consumer agent's access to the gateway **as data, with no redeploy and no policy
+edit** — one `az appconfig kv set`. This is Phase 1 of [`proxy.md`](proxy.md). **Off by
+default**; enable with `azd env set ENABLE_PROXY true` before `azd up`.
+
+- **App** (`src/proxy/`): a ~120-line FastAPI decision service. `POST /check {"agent_id": ...}`
+  → `{"verdict": "allow"|"deny"}`. It polls App Configuration key `revocations` (a JSON array
+  of Entra `appid`s) every 10s and **fails closed** until the first load succeeds. Run the
+  logic self-test: `python src/proxy/server.py --self-test`.
+- **Infra** (`infra/proxy.bicep`, provider RG): keyless and self-contained — an **App
+  Configuration** store (the revocation list), a user-assigned identity (**App Configuration
+  Data Reader**), and a Container App. The **deployer** gets **App Configuration Data Owner**
+  so you can edit the list from the CLI.
+- **Gateway** (`infra/provider.bicep`): the APIM API policy reads the caller's `appid` from the
+  validated token and, when armed, does a synchronous `send-request` to the proxy's `/check`.
+  Non-`allow` (or any proxy error / timeout) → **403**. The `governance-proxy-url` named value
+  defaults to `none`, so the whole block is **skipped** (zero overhead) unless the proxy is
+  deployed; the `deploy_proxy.py` postprovision hook arms it with the live URL.
+
+**Kill a consumer** (e.g. consumer B) — takes effect within ~10s, no redeploy:
+
+```bash
+# The gateway-accepted consumer appids (index 0 = B, 1 = C):
+azd env get-value CONSUMER_CLIENT_IDS
+
+APPCS=$(azd env get-value PROXY_APP_CONFIG_NAME)
+az appconfig kv set --name "$APPCS" --key revocations \
+  --value '["<consumer-b-appid>"]' --auth-mode login --yes
+```
+
+**Un-kill** — set it back to an empty list:
+
+```bash
+az appconfig kv set --name "$APPCS" --key revocations \
+  --value '[]' --auth-mode login --yes
+```
+
 ## Notes / assumptions
 
 - **Account-level connection**: created on the account (`accounts/connections`) with
