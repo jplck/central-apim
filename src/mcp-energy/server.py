@@ -17,7 +17,11 @@ CUSTOMERS = DATA["customers"]
 # meter_id -> owning customer_id, built once at startup.
 METER_OWNER = {m["meter_id"]: cid for cid, c in CUSTOMERS.items() for m in c["meters"]}
 
-mcp = FastMCP("energy-profile", host="0.0.0.0", port=8000)
+# stateless_http/json_response: the Agent 365 Tooling Gateway (and its discovery client)
+# calls tools/list without threading an Mcp-Session-Id, which a stateful server rejects
+# with HTTP 400. Stateless + JSON responses make each request self-contained.
+mcp = FastMCP("energy-profile", host="0.0.0.0", port=8000,
+              stateless_http=True, json_response=True)
 
 
 def _customer(customer_id: str) -> dict:

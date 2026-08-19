@@ -272,6 +272,11 @@ back end. **On by default** (`enableMcp=true`); set it to `false` to skip.
   into the ACR via ARM REST as the **azd** identity (no `az` CLI), then swaps the real image
   and target port 8000 onto the app. The live URL is the `MCP_URI` output
   (`https://<app>.<region>.azurecontainerapps.io/mcp`).
+- **Agent 365 (BYO MCP)**: `infra/hooks/register_mcp_a365.sh` runs after deploy and does
+  Phase 0 (`a365 develop-mcp evaluate`) + Phase 1 (NoAuth `register-external-mcp-server`).
+  Opt-in and non-fatal: `azd env set ENABLE_A365_MCP_REGISTER true` (or `dryrun`), needs
+  `a365` ≥1.1.165-preview + `az login`. Full plan and the EntraOAuth hardening path:
+  [`mcp_tools_a365.md`](mcp_tools_a365.md).
 
 ## Notes / assumptions
 

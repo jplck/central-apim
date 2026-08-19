@@ -4,6 +4,9 @@
 # agent hook venv
 infra/hooks/.venv/
 
+# Agent 365 MCP evaluation reports
+infra/hooks/.a365-eval/
+
 # python
 __pycache__/
 *.pyc

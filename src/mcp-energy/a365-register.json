@@ -1,0 +1,25 @@
+{
+  "serverName": "ext_energymcp5",
+  "serverUrl": "https://ca-mcp-ibghxhgctfipe.orangemeadow-9815b37e.swedencentral.azurecontainerapps.io/mcp",
+  "authType": "NoAuth",
+  "description": "Read-only demo: fake energy customer, meter & consumption data (5 customers).",
+  "publisherName": "Contoso Energy (demo)",
+  "tools": [
+    {
+      "name": "get_customer_profile",
+      "description": "Account holder, address, tariff and meter list for a customer."
+    },
+    {
+      "name": "list_meters",
+      "description": "Meters (electricity/gas) registered to the customer."
+    },
+    {
+      "name": "get_meter_readings",
+      "description": "Daily readings for one meter, optionally filtered by inclusive ISO date range."
+    },
+    {
+      "name": "get_consumption_summary",
+      "description": "Pre-aggregated totals/cost for 'month' or 'year' so the agent never sums raw readings."
+    }
+  ]
+}

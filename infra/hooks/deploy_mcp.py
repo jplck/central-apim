@@ -92,6 +92,9 @@ def _build_image(cred, acr_id, login_server) -> str:
         "dockerFilePath": "Dockerfile",
         "imageNames": [repo_tag],
         "isPushEnabled": True,
+        # noCache: the context is tiny (5 files) and a cached COPY layer can otherwise ship a
+        # stale server.py under a fresh tag — a silent "deployed my old code" bug.
+        "noCache": True,
         "platform": {"os": "Linux", "architecture": "amd64"},
     }).encode()
     status, body = _http("POST", f"{ARM}{acr_id}/scheduleRun?api-version={ACR_API}",
