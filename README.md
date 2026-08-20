@@ -272,6 +272,12 @@ back end. **On by default** (`enableMcp=true`); set it to `false` to skip.
   into the ACR via ARM REST as the **azd** identity (no `az` CLI), then swaps the real image
   and target port 8000 onto the app. The live URL is the `MCP_URI` output
   (`https://<app>.<region>.azurecontainerapps.io/mcp`).
+- **Gateway route** (`infra/provider.bicep`): the server is also fronted by the shared APIM
+  gateway as the **`energy-mcp`** API (`MCP_GATEWAY_URL` output), which applies the same
+  `governance-check` policy fragment (Entra token validation + kill switch) as the models API.
+  The MCP container itself is unauth, so **APIM is its auth + governance enforcement point**;
+  callers present the same Entra token they use for the models route. Operations: `POST` and
+  `GET` (Streamable HTTP) on `/`.
 - **Agent 365 (BYO MCP)**: `infra/hooks/register_mcp_a365.sh` runs after deploy and does
   Phase 0 (`a365 develop-mcp evaluate`) + Phase 1 (NoAuth `register-external-mcp-server`).
   Opt-in and non-fatal: `azd env set ENABLE_A365_MCP_REGISTER true` (or `dryrun`), needs
@@ -292,11 +298,14 @@ default**; enable with `azd env set ENABLE_PROXY true` before `azd up`.
   Configuration** store (the revocation list), a user-assigned identity (**App Configuration
   Data Reader**), and a Container App. The **deployer** gets **App Configuration Data Owner**
   so you can edit the list from the CLI.
-- **Gateway** (`infra/provider.bicep`): the APIM API policy reads the caller's `appid` from the
-  validated token and, when armed, does a synchronous `send-request` to the proxy's `/check`.
-  Non-`allow` (or any proxy error / timeout) → **403**. The `governance-proxy-host` named value
-  defaults to a non-resolving sentinel, so the whole block is **skipped** (zero overhead) unless
-  the proxy is deployed; the `deploy_proxy.py` postprovision hook arms it with the live host.
+- **Gateway** (`infra/provider.bicep`): the governance check — `validate-azure-ad-token` + the
+  kill switch — lives in one reusable APIM **policy fragment** (`governance-check`) that every
+  API includes via `<include-fragment>` (the models API and the `energy-mcp` API today). When
+  armed, the kill switch reads the caller's `appid` from the validated token and does a
+  synchronous `send-request` to the proxy's `/check`. Non-`allow` (or any proxy error / timeout)
+  → **403**. The `governance-proxy-host` named value defaults to a non-resolving sentinel, so the
+  whole block is **skipped** (zero overhead) unless the proxy is deployed; the `deploy_proxy.py`
+  postprovision hook arms it with the live host.
 
 **Kill a consumer** (e.g. consumer B) — takes effect within ~10s, no redeploy:
 

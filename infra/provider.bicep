@@ -9,6 +9,9 @@ param tags object
 @description('Client IDs of the consumer Foundry managed identities allowed through the gateway.')
 param consumerClientIds array
 
+@description('Backend URL of the energy MCP Container App (…/mcp). Empty => the MCP route is not added to the gateway.')
+param mcpBackendUrl string = ''
+
 param modelName string = 'gpt-4.1'
 param modelVersion string = '2025-04-14'
 param modelCapacity int = 50
@@ -84,6 +87,10 @@ resource chatCompletions 'Microsoft.ApiManagement/service/apis/operations@2024-0
 // then swap to APIM's own managed identity to reach the backend Foundry keyless.
 var allowedAppIds = join(map(consumerClientIds, id => '<application-id>${id}</application-id>'), '')
 
+// The Entra-token validation shared by every gateway API: accept only the allowed consumer
+// identities (by client id), audience = cognitiveservices. Lives in the reusable fragment below.
+var validateXml = '<validate-azure-ad-token tenant-id="${tenant().tenantId}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. A valid Entra token from an allowed Foundry resource is required."><client-application-ids>${allowedAppIds}</client-application-ids><audiences><audience>https://cognitiveservices.azure.com</audience></audiences></validate-azure-ad-token>'
+
 // Phase 1 kill switch (proxy.md): after validating the caller, ask the governance proxy whether
 // this caller's Entra appid is revoked, and fail closed (403) on deny / non-200 / unreachable.
 // Inert until the proxy deploy hook points the `governance-proxy-host` named value at the proxy.
@@ -94,7 +101,13 @@ var allowedAppIds = join(map(consumerClientIds, id => '<application-id>${id}</ap
 // absolute URL, which APIM statically validates even inside a <choose> that never runs.
 var killSwitchXml = '<set-variable name="agentId" value="@{ var jwt = context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;).Replace(&quot;Bearer &quot;, &quot;&quot;).AsJwt(); return jwt == null ? &quot;unknown&quot; : (jwt.Claims.GetValueOrDefault(&quot;appid&quot;) ?? jwt.Claims.GetValueOrDefault(&quot;azp&quot;) ?? &quot;unknown&quot;); }" /><choose><when condition="@(&quot;{{governance-proxy-host}}&quot; != &quot;disabled.invalid&quot;)"><send-request mode="new" response-variable-name="killResp" timeout="5" ignore-error="true"><set-url>https://{{governance-proxy-host}}/check</set-url><set-method>POST</set-method><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>@{ return new JObject(new JProperty("agent_id", (string)context.Variables["agentId"])).ToString(); }</set-body></send-request><choose><when condition="@{ var r = context.Variables.GetValueOrDefault&lt;IResponse&gt;(&quot;killResp&quot;); if (r == null || r.StatusCode != 200) { return true; } try { return ((string)r.Body.As&lt;JObject&gt;(true)[&quot;verdict&quot;]) != &quot;allow&quot;; } catch { return true; } }"><return-response><set-status code="403" reason="Forbidden" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"error":"agent revoked or governance proxy unavailable"}</set-body></return-response></when></choose></when></choose>'
 
-var apiPolicyXml = '<policies><inbound><base /><validate-azure-ad-token tenant-id="${tenant().tenantId}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. A valid Entra token from an allowed Foundry resource is required."><client-application-ids>${allowedAppIds}</client-application-ids><audiences><audience>https://cognitiveservices.azure.com</audience></audiences></validate-azure-ad-token>${killSwitchXml}<authentication-managed-identity resource="https://cognitiveservices.azure.com" /><set-backend-service base-url="${foundryA.properties.endpoint}openai" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
+// The reusable governance fragment: validate the Entra token, then run the kill switch. Included
+// by every API (foundry models + energy MCP) so the same auth + revocation check applies once,
+// gateway-wide. Change governance here and every route inherits it.
+var governanceFragmentXml = '<fragment>${validateXml}${killSwitchXml}</fragment>'
+
+// Foundry models API: governance fragment, then swap to APIM's managed identity for the backend.
+var apiPolicyXml = '<policies><inbound><base /><include-fragment fragment-id="governance-check" /><authentication-managed-identity resource="https://cognitiveservices.azure.com" /><set-backend-service base-url="${foundryA.properties.endpoint}openai" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
 
 // The proxy *host* (no scheme) the kill switch calls. Default is a non-resolving sentinel host
 // (`.invalid`) that keeps the switch off; the proxy deploy hook (deploy_proxy.py) sets this to
@@ -110,11 +123,63 @@ resource proxyHostNv 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = 
   }
 }
 
+// Reusable governance policy fragment: validate-azure-ad-token + kill switch. Referenced by every
+// API via <include-fragment fragment-id="governance-check" />. Depends on the named value because
+// the kill switch references {{governance-proxy-host}} (must exist when the fragment is validated).
+resource governanceFragment 'Microsoft.ApiManagement/service/policyFragments@2024-05-01' = {
+  parent: apim
+  name: 'governance-check'
+  properties: {
+    description: 'Entra token validation + dynamic kill switch (proxy.md), reusable across APIs.'
+    value: governanceFragmentXml
+    format: 'rawxml'
+  }
+  dependsOn: [ proxyHostNv ]
+}
+
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
   parent: api
   name: 'policy'
   properties: { value: apiPolicyXml, format: 'rawxml' }
-  dependsOn: [ chatCompletions, proxyHostNv ]
+  dependsOn: [ chatCompletions, governanceFragment ]
+}
+
+// Energy MCP server route (only when the MCP demo is enabled). Same governance fragment, backend =
+// the MCP Container App. The MCP server itself is unauth, so APIM is its auth + kill-switch
+// enforcement point. ponytail: reuses the consumers' cognitiveservices token (same audience) rather
+// than minting an MCP-specific app registration. Streamable HTTP => POST (messages) + GET (SSE).
+resource mcpApi 'Microsoft.ApiManagement/service/apis@2024-05-01' = if (!empty(mcpBackendUrl)) {
+  parent: apim
+  name: 'energy-mcp'
+  properties: {
+    displayName: 'Energy MCP'
+    path: 'energy-mcp'
+    protocols: [ 'https' ]
+    subscriptionRequired: false
+    serviceUrl: mcpBackendUrl
+  }
+}
+
+resource mcpPost 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = if (!empty(mcpBackendUrl)) {
+  parent: mcpApi
+  name: 'mcp-post'
+  properties: { displayName: 'MCP (POST)', method: 'POST', urlTemplate: '/' }
+}
+
+resource mcpGet 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = if (!empty(mcpBackendUrl)) {
+  parent: mcpApi
+  name: 'mcp-get'
+  properties: { displayName: 'MCP (GET/SSE)', method: 'GET', urlTemplate: '/' }
+}
+
+resource mcpPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = if (!empty(mcpBackendUrl)) {
+  parent: mcpApi
+  name: 'policy'
+  properties: {
+    value: '<policies><inbound><base /><include-fragment fragment-id="governance-check" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
+    format: 'rawxml'
+  }
+  dependsOn: [ mcpPost, mcpGet, governanceFragment ]
 }
 
 // APIM's managed identity may call the provider Foundry's models, keyless.
@@ -134,5 +199,6 @@ output foundryEndpoint string = foundryA.properties.endpoint
 output apimName string = apim.name
 output apimGatewayUrl string = apim.properties.gatewayUrl
 output apiPath string = apiPath
+output mcpApiPath string = empty(mcpBackendUrl) ? '' : 'energy-mcp'
 output modelName string = modelName
 output modelVersion string = modelVersion
