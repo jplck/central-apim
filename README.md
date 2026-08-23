@@ -117,19 +117,27 @@ deployed to a consumer project and calls the shared model.
 - **Infra** (`enableHostedAgents=true`, default): a shared **ACR** (provider RG), a
   **capability host** (`kind: Agents`, public hosting) on the hosting consumer, a
   `ContainerRegistry` connection, and **AcrPull** for its identity — all keyless.
-- **Container** (`src/hosted-agent/agent.py`): ~15 lines —
-  `FoundryChatClient(model="apim-shared/gpt-4.1").as_agent(...)` served by
+- **Container** (`src/hosted-agent/agent.py`): ~40 lines — an **energy-supplier customer
+  agent**. `FoundryChatClient(model="apim-shared/gpt-4.1").as_agent(...)` served by
   `ResponsesHostServer`. Its model calls route project → APIM → provider A, exactly like
-  the prompt agent, just from inside a container. `requirements.txt` **must** include
-  `mcp` even though this agent has no tools: `agent_framework_foundry_hosting` imports it
-  unconditionally, and omitting it crashes the container on startup (the invoke then fails
-  with `424 session_not_ready` because `/readiness` never serves).
+  the prompt agent, just from inside a container. When `MCP_GATEWAY_URL` is set it also
+  attaches the native **`MCPStreamableHTTPTool`** pointed at the `energy-mcp` route on the
+  **same gateway**, injecting its Entra Agent ID bearer token per request via
+  `header_provider` — so both model *and* tools go project → APIM → backend, keyless. The
+  gateway allows the agent by its **blueprint appid** (see below). `requirements.txt`
+  includes `mcp` (the tool's transport; `agent_framework_foundry_hosting` also imports it
+  unconditionally, so omitting it crashes the container on startup).
 - **Deploy** (`infra/hooks/create_hosted_agents.py`): builds the image on ACR via ARM REST
   (`listBuildSourceUploadUrl` → upload → `scheduleRun`) as the **azd** identity — no `az`
   CLI, so it works even if `az` and `azd` are logged into different identities — then
   `create_version(HostedAgentDefinition(...))`. It also tries (best-effort) to grant the
   agent's own identity **Foundry User** on its project; that grant is optional — a hosted
-  agent already has default model-inferencing access via its project endpoint.
+  agent already has default model-inferencing access via its project endpoint. When
+  `enableMcp` is on it also injects `MCP_GATEWAY_URL` into the agent and sets the APIM
+  **`gateway-agent-appid`** named value to the agent's Entra Agent ID **blueprint appid**,
+  so the shared `governance-check` fragment's `validate-azure-ad-token` admits the agent's
+  MCP calls. All instances of a blueprint share one appid, so one value covers them all;
+  both steps are best-effort and never fail the deploy.
 
 Invoke it (hosted agents use their **own agent endpoint**, not `agent_reference`):
 

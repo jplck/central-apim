@@ -87,9 +87,11 @@ resource chatCompletions 'Microsoft.ApiManagement/service/apis/operations@2024-0
 // then swap to APIM's own managed identity to reach the backend Foundry keyless.
 var allowedAppIds = join(map(consumerClientIds, id => '<application-id>${id}</application-id>'), '')
 
-// The Entra-token validation shared by every gateway API: accept only the allowed consumer
-// identities (by client id), audience = cognitiveservices. Lives in the reusable fragment below.
-var validateXml = '<validate-azure-ad-token tenant-id="${tenant().tenantId}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. A valid Entra token from an allowed Foundry resource is required."><client-application-ids>${allowedAppIds}</client-application-ids><audiences><audience>https://cognitiveservices.azure.com</audience></audiences></validate-azure-ad-token>'
+// The Entra-token validation shared by every gateway API: accept the allowed consumer identities
+// (by client id) plus the hosted agent's Entra Agent ID *blueprint* appid (gateway-agent-appid,
+// set post-deploy by create_hosted_agents.py; harmless placeholder until then). Audience =
+// cognitiveservices. Lives in the reusable fragment below.
+var validateXml = '<validate-azure-ad-token tenant-id="${tenant().tenantId}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. A valid Entra token from an allowed Foundry resource is required."><client-application-ids>${allowedAppIds}<application-id>{{gateway-agent-appid}}</application-id></client-application-ids><audiences><audience>https://cognitiveservices.azure.com</audience></audiences></validate-azure-ad-token>'
 
 // Phase 1 kill switch (proxy.md): after validating the caller, ask the governance proxy whether
 // this caller's Entra appid is revoked, and fail closed (403) on deny / non-200 / unreachable.
@@ -123,6 +125,20 @@ resource proxyHostNv 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = 
   }
 }
 
+// The hosted agent's Entra Agent ID *blueprint* appid, allowed through the gateway so its MCP
+// calls pass validate-azure-ad-token. Defaults to a never-matching placeholder; the hosted-agent
+// deploy hook (create_hosted_agents.py) sets it to the real blueprint appid post-provision. One
+// appid because all agent instances of a blueprint share its appid (aka client id).
+resource agentAppIdNv 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  parent: apim
+  name: 'gateway-agent-appid'
+  properties: {
+    displayName: 'gateway-agent-appid'
+    value: '00000000-0000-0000-0000-000000000000'
+    secret: false
+  }
+}
+
 // Reusable governance policy fragment: validate-azure-ad-token + kill switch. Referenced by every
 // API via <include-fragment fragment-id="governance-check" />. Depends on the named value because
 // the kill switch references {{governance-proxy-host}} (must exist when the fragment is validated).
@@ -134,7 +150,7 @@ resource governanceFragment 'Microsoft.ApiManagement/service/policyFragments@202
     value: governanceFragmentXml
     format: 'rawxml'
   }
-  dependsOn: [ proxyHostNv ]
+  dependsOn: [ proxyHostNv, agentAppIdNv ]
 }
 
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {

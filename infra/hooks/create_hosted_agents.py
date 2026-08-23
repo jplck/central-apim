@@ -41,6 +41,7 @@ ACR_API = "2019-06-01-preview"
 # Entra data-plane role propagation after provisioning can take a few minutes.
 RETRIES = int(os.environ.get("AGENT_HOOK_RETRIES", "12"))
 DELAY = int(os.environ.get("AGENT_HOOK_DELAY", "20"))
+APIM_NV_API = "2024-05-01"  # APIM named-value ARM API version (matches provider.bicep)
 
 
 def _require(name):
@@ -59,6 +60,13 @@ def _pairs(endpoints, arm_ids):
 def _extract_principal_id(agent):
     ident = getattr(agent, "instance_identity", None)
     return getattr(ident, "principal_id", None) if ident else None
+
+
+def _extract_blueprint_appid(agent):
+    """The agent's Entra Agent ID *blueprint* appid (client id) — shared by all its instances and
+    the `appid` claim its runtime tokens carry, so it's what the APIM gateway allowlists."""
+    bp = getattr(agent, "blueprint", None)
+    return getattr(bp, "client_id", None) if bp else None
 
 
 def _transient_auth(err):
@@ -200,10 +208,44 @@ def _assign_model_access(cred, principal_id, scope):
         return
 
 
+def _allow_agent_appid(cred, appid):
+    """Best-effort: point APIM's gateway-agent-appid named value at the hosted agent's Entra Agent ID
+    blueprint appid, so its MCP calls pass validate-azure-ad-token. Non-fatal — the agent reaches the
+    model via its project connection regardless; only its direct MCP calls need this."""
+    sub = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
+    env = os.environ.get("AZURE_ENV_NAME", "").strip()
+    apim = os.environ.get("APIM_NAME", "").strip()
+    if not (sub and env and apim and appid):
+        print("  ! APIM outputs or blueprint appid missing; set the gateway-agent-appid named value "
+              "manually if the agent needs the MCP tools.", flush=True)
+        return
+    rg = f"rg-{env}-provider"
+    url = (f"{ARM}/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ApiManagement"
+           f"/service/{apim}/namedValues/gateway-agent-appid?api-version={APIM_NV_API}")
+    body = json.dumps({"properties": {
+        "displayName": "gateway-agent-appid", "value": appid, "secret": False,
+    }}).encode()
+    status, resp = _http("PUT", url, token=_arm_token(cred), data=body,
+                         headers={"Content-Type": "application/json"})
+    if status in (200, 201, 202):
+        print(f"+ gateway now allows the hosted-agent blueprint appid {appid}", flush=True)
+    else:
+        print(f"  ! could not set gateway-agent-appid ({status}): {resp} — set it manually.", flush=True)
+
+
 # --- Agent deployment -----------------------------------------------------------
 
 def _deploy(endpoint, arm_id, image, model, cred):
     project = AIProjectClient(endpoint=endpoint, credential=cred, allow_preview=True)
+    env_vars = {
+        "AZURE_AI_PROJECT_ENDPOINT": endpoint,
+        "AZURE_AI_MODEL_DEPLOYMENT_NAME": model,
+    }
+    # The energy MCP route on the shared gateway (empty unless enableMcp). agent.py adds the MCP
+    # tool only when this is set.
+    mcp_url = os.environ.get("MCP_GATEWAY_URL", "").strip()
+    if mcp_url:
+        env_vars["MCP_GATEWAY_URL"] = mcp_url
     definition = HostedAgentDefinition(
         container_configuration=ContainerConfiguration(image=image),
         # cpu/memory are strings and must match a valid tier exactly. Valid tiers:
@@ -212,10 +254,7 @@ def _deploy(endpoint, arm_id, image, model, cred):
         cpu="2",
         memory="4Gi",
         protocol_versions=[ProtocolVersionRecord(protocol=AgentEndpointProtocol.RESPONSES, version="1.0.0")],
-        environment_variables={
-            "AZURE_AI_PROJECT_ENDPOINT": endpoint,
-            "AZURE_AI_MODEL_DEPLOYMENT_NAME": model,
-        },
+        environment_variables=env_vars,
     )
     # SDK auto-injects the "Foundry-Features: HostedAgents=..." preview header.
     agent = project.agents.create_version(
@@ -226,19 +265,24 @@ def _deploy(endpoint, arm_id, image, model, cred):
     )
     print(f"+ deployed hosted '{agent.name}' (v{getattr(agent, 'version', '?')}) in {endpoint}", flush=True)
 
-    # The agent runs under its own identity, so it needs model access on the project.
+    # The agent runs under its own identity, so it needs model access on the project. We also want
+    # its Entra Agent ID blueprint appid so the gateway can allow its MCP calls.
     pid = _extract_principal_id(agent)
+    bp_appid = _extract_blueprint_appid(agent)
     for _ in range(6):
-        if pid:
+        if pid and bp_appid:
             break
         time.sleep(5)
-        pid = _extract_principal_id(project.agents.get_version(AGENT_NAME, agent.version))
+        latest = project.agents.get_version(AGENT_NAME, agent.version)
+        pid = pid or _extract_principal_id(latest)
+        bp_appid = bp_appid or _extract_blueprint_appid(latest)
     if pid and arm_id:
         _assign_model_access(cred, pid, arm_id)
     elif not pid:
         print(f"  ! could not resolve the agent identity; grant Foundry User to '{AGENT_NAME}' manually.", flush=True)
     else:
         print("  ! project ARM id missing; grant Foundry User to the agent identity manually.", flush=True)
+    return bp_appid
 
 
 def main():
@@ -251,10 +295,13 @@ def main():
     cred = AzureDeveloperCliCredential()
     image = _build_image(cred, acr_id, login_server)  # one image, deployed to every consumer
 
+    blueprint_appids = []
     for endpoint, arm_id in _pairs(endpoints, arm_ids):
         for attempt in range(1, RETRIES + 1):
             try:
-                _deploy(endpoint, arm_id, image, model, cred)
+                bp = _deploy(endpoint, arm_id, image, model, cred)
+                if bp and bp not in blueprint_appids:
+                    blueprint_appids.append(bp)
                 break
             except (ClientAuthenticationError, HttpResponseError) as err:
                 if attempt < RETRIES and _transient_auth(err):
@@ -263,6 +310,19 @@ def main():
                     time.sleep(DELAY)
                     continue
                 raise
+
+    # Allow the hosted agent's Entra Agent ID blueprint appid through the gateway so its MCP calls
+    # pass validate-azure-ad-token. Instances share one blueprint appid; if multiple consumers host
+    # the agent (each its own blueprint) allow the first and warn — extend gateway-agent-appid by hand.
+    if blueprint_appids:
+        if len(blueprint_appids) > 1:
+            print(f"  ! multiple hosted-agent blueprints {blueprint_appids}; allowing only the first "
+                  f"through the gateway. Add the rest to gateway-agent-appid if they need the MCP tools.",
+                  flush=True)
+        _allow_agent_appid(cred, blueprint_appids[0])
+    elif os.environ.get("MCP_GATEWAY_URL", "").strip():
+        print("  ! no hosted-agent blueprint appid resolved; the agent's MCP calls will be rejected by "
+              "the gateway until you set the gateway-agent-appid named value.", flush=True)
 
     print(f"Done. Hosted agent '{AGENT_NAME}' runs in each consumer using model '{model}'.")
 
@@ -284,6 +344,16 @@ def _selftest():
     assert _extract_principal_id(_WithId()) == "p1"
     assert _extract_principal_id(_NoId()) is None
     assert _extract_principal_id(object()) is None
+
+    class _WithBp:
+        blueprint = type("B", (), {"client_id": "app1"})()
+
+    class _NoBp:
+        blueprint = None
+
+    assert _extract_blueprint_appid(_WithBp()) == "app1"
+    assert _extract_blueprint_appid(_NoBp()) is None
+    assert _extract_blueprint_appid(object()) is None
 
     # Role-assignment name is deterministic (idempotent retries) and scope-sensitive.
     s = "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a/projects/p"
