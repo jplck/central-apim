@@ -75,10 +75,11 @@ module provider 'provider.bicep' = {
     token: token
     tags: tags
     consumerClientIds: identities.outputs.clientIds
-    // Wire the energy MCP route's backend to the MCP Container App. Referencing this output makes
-    // Bicep deploy the (self-contained) mcp module before provider. Empty => no MCP route.
+    // Wire the energy MCP route's backend to the MCP Container App. Native APIM MCP servers take the
+    // backend BASE url (transport endpoint /mcp is set in mcpProperties). Referencing this output
+    // makes Bicep deploy the (self-contained) mcp module before provider. Empty => no MCP route.
     #disable-next-line BCP318 // guarded by enableMcp; mcp is deployed whenever this is read.
-    mcpBackendUrl: enableMcp ? mcp.outputs.uri : ''
+    mcpBackendUrl: enableMcp ? mcp.outputs.baseUri : ''
   }
 }
 
@@ -188,7 +189,7 @@ output MCP_APP_ID string = enableMcp ? mcp.outputs.appId : ''
 output MCP_URI string = enableMcp ? mcp.outputs.uri : ''
 
 // The energy MCP server fronted by the APIM gateway (governance fragment applies): auth + kill switch.
-output MCP_GATEWAY_URL string = enableMcp ? '${provider.outputs.apimGatewayUrl}/${provider.outputs.mcpApiPath}' : ''
+output MCP_GATEWAY_URL string = enableMcp ? '${provider.outputs.apimGatewayUrl}/${provider.outputs.mcpApiPath}/mcp' : ''
 
 // Governance proxy (optional, Phase 1): App Config store to write kills into, and the proxy
 // app the later image-swap hook targets.

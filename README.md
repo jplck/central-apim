@@ -281,11 +281,15 @@ back end. **On by default** (`enableMcp=true`); set it to `false` to skip.
   and target port 8000 onto the app. The live URL is the `MCP_URI` output
   (`https://<app>.<region>.azurecontainerapps.io/mcp`).
 - **Gateway route** (`infra/provider.bicep`): the server is also fronted by the shared APIM
-  gateway as the **`energy-mcp`** API (`MCP_GATEWAY_URL` output), which applies the same
-  `governance-check` policy fragment (Entra token validation + kill switch) as the models API.
-  The MCP container itself is unauth, so **APIM is its auth + governance enforcement point**;
-  callers present the same Entra token they use for the models route. Operations: `POST` and
-  `GET` (Streamable HTTP) on `/`.
+  gateway as a **native APIM MCP server** (`type: 'mcp'`, streamable-HTTP passthrough — not a
+  generic HTTP API), so APIM is MCP-protocol-aware: it surfaces the backend's tools as
+  first-class API-tool sub-resources and can be registered/discovered in API Center. It applies
+  the same `governance-check` policy fragment (Entra token validation + kill switch) as the
+  models API. The MCP container itself is unauth, so **APIM is its auth + governance enforcement
+  point**; callers present the same Entra token they use for the models route. Client endpoint:
+  `https://<apim>/energy-mcp/mcp` (the `MCP_GATEWAY_URL` output); backend transport endpoint
+  `/mcp` is set in `mcpProperties`. Requires APIM api-version `2025-09-01-preview` on a tier that
+  supports MCP servers (this demo uses Standard v2).
 - **Agent 365 (BYO MCP)**: `infra/hooks/register_mcp_a365.sh` runs after deploy and does
   Phase 0 (`a365 develop-mcp evaluate`) + Phase 1 (NoAuth `register-external-mcp-server`).
   Opt-in and non-fatal: `azd env set ENABLE_A365_MCP_REGISTER true` (or `dryrun`), needs

@@ -9,7 +9,7 @@ param tags object
 @description('Client IDs of the consumer Foundry managed identities allowed through the gateway.')
 param consumerClientIds array
 
-@description('Backend URL of the energy MCP Container App (…/mcp). Empty => the MCP route is not added to the gateway.')
+@description('Backend BASE URL of the energy MCP Container App (no path; the /mcp transport endpoint is set on the MCP server). Empty => the MCP route is not added to the gateway.')
 param mcpBackendUrl string = ''
 
 param modelName string = 'gpt-4.1'
@@ -160,42 +160,41 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = 
   dependsOn: [ chatCompletions, governanceFragment ]
 }
 
-// Energy MCP server route (only when the MCP demo is enabled). Same governance fragment, backend =
-// the MCP Container App. The MCP server itself is unauth, so APIM is its auth + kill-switch
-// enforcement point. ponytail: reuses the consumers' cognitiveservices token (same audience) rather
-// than minting an MCP-specific app registration. Streamable HTTP => POST (messages) + GET (SSE).
-resource mcpApi 'Microsoft.ApiManagement/service/apis@2024-05-01' = if (!empty(mcpBackendUrl)) {
+// Energy MCP server route (only when the MCP demo is enabled). Exposed as a NATIVE APIM MCP server
+// (type: 'mcp', passthrough to the external backend) instead of a generic HTTP passthrough, so APIM
+// is MCP-protocol-aware: it surfaces the backend's tools as first-class API-tool sub-resources,
+// handles streamable-HTTP transport correctly, and can be registered/discovered in API Center. The
+// SAME governance fragment attaches as the API policy, so auth + kill-switch are identical to the
+// model route. The MCP server itself is unauth, so APIM is its auth + kill-switch enforcement point.
+// Requires api-version 2025-09-01-preview. Client endpoint: https://<apim>/energy-mcp/mcp ;
+// backend = the Container App base + the /mcp transport endpoint below.
+resource mcpApi 'Microsoft.ApiManagement/service/apis@2025-09-01-preview' = if (!empty(mcpBackendUrl)) {
   parent: apim
   name: 'energy-mcp'
   properties: {
+    type: 'mcp'
     displayName: 'Energy MCP'
     path: 'energy-mcp'
     protocols: [ 'https' ]
     subscriptionRequired: false
     serviceUrl: mcpBackendUrl
+    mcpProperties: {
+      transportType: 'streamable'
+      endpoints: [
+        { name: 'message', uriTemplate: '/mcp' }
+      ]
+    }
   }
 }
 
-resource mcpPost 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = if (!empty(mcpBackendUrl)) {
-  parent: mcpApi
-  name: 'mcp-post'
-  properties: { displayName: 'MCP (POST)', method: 'POST', urlTemplate: '/' }
-}
-
-resource mcpGet 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = if (!empty(mcpBackendUrl)) {
-  parent: mcpApi
-  name: 'mcp-get'
-  properties: { displayName: 'MCP (GET/SSE)', method: 'GET', urlTemplate: '/' }
-}
-
-resource mcpPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = if (!empty(mcpBackendUrl)) {
+resource mcpPolicy 'Microsoft.ApiManagement/service/apis/policies@2025-09-01-preview' = if (!empty(mcpBackendUrl)) {
   parent: mcpApi
   name: 'policy'
   properties: {
     value: '<policies><inbound><base /><include-fragment fragment-id="governance-check" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
     format: 'rawxml'
   }
-  dependsOn: [ mcpPost, mcpGet, governanceFragment ]
+  dependsOn: [ governanceFragment ]
 }
 
 // APIM's managed identity may call the provider Foundry's models, keyless.
