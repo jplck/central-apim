@@ -180,9 +180,11 @@ resource mcpApi 'Microsoft.ApiManagement/service/apis@2025-09-01-preview' = if (
     serviceUrl: mcpBackendUrl
     mcpProperties: {
       transportType: 'streamable'
-      endpoints: [
-        { name: 'message', uriTemplate: '/mcp' }
-      ]
+      // ARM wants endpoints as an object keyed by endpoint name, not an array (the doc examples show
+      // an array, but the live 2025-09-01-preview API deserializes a Dictionary<string,Endpoint>).
+      endpoints: {
+        message: { uriTemplate: '/mcp' }
+      }
     }
   }
 }
