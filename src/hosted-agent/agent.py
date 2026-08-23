@@ -14,7 +14,10 @@ Env (injected by the deploy hook via the hosted-agent definition):
   MCP_GATEWAY_URL                 the energy MCP route on the gateway (optional)
 """
 
+import base64
+import json
 import os
+import sys
 
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework_foundry import FoundryChatClient
@@ -22,6 +25,39 @@ from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 credential = DefaultAzureCredential()  # the agent's Foundry-injected Microsoft Entra Agent ID
+
+_seen_appids = set()
+
+
+def _log_token_identity(token):
+    """Log the identity claims of the token we send to the gateway, once per distinct appid.
+
+    The gateway allowlists by `appid`, so this reveals exactly which identity each invocation path
+    presents — e.g. the Foundry-injected Agent ID (blueprint) via the Responses endpoint vs. a
+    different managed identity via the portal playground. Claims (appid/aud/oid/sub) aren't secrets;
+    the raw token is never logged. Never breaks the request over a log line.
+    """
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)  # pad base64url
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        appid = claims.get("appid") or claims.get("azp") or "unknown"
+        if appid in _seen_appids:
+            return
+        _seen_appids.add(appid)
+        print(f"[gateway-agent] MCP token identity: appid={appid} aud={claims.get('aud')} "
+              f"oid={claims.get('oid')} sub={claims.get('sub')} "
+              f"(allow this appid in gateway-agent-appid to pass validate-azure-ad-token)",
+              file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _mcp_headers(_kwargs):
+    token = gateway_token()
+    _log_token_identity(token)
+    return {"Authorization": f"Bearer {token}"}
+
 
 # The energy MCP server, reached through the SAME APIM gateway as the model. The gateway validates
 # an Entra token (audience cognitiveservices) and runs the governance kill switch, so inject the
@@ -36,7 +72,7 @@ if mcp_url:
             name="energy",
             url=mcp_url,
             description="Energy supplier customer profiles, meters, readings and consumption.",
-            header_provider=lambda _kwargs: {"Authorization": f"Bearer {gateway_token()}"},
+            header_provider=_mcp_headers,
         )
     )
 
