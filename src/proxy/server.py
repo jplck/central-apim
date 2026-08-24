@@ -222,6 +222,9 @@ def _make_app():
     def check(req: CheckReq):
         loaded, revoked = state.snapshot()
         verdict, reason = decide(req.agent_id, loaded, revoked)
+        if verdict == "deny":  # every 403 the gateway returns starts here — make it explain itself
+            print(f"[proxy] DENY agent_id={req.agent_id!r} reason={reason!r} "
+                  f"loaded={loaded} revoked_count={len(revoked)}", flush=True)
         return {"verdict": verdict, "reason": reason, "agent_id": req.agent_id}
 
     @app.get("/health")
