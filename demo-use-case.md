@@ -149,6 +149,9 @@ presents an Entra token the server validates via JWKS — keyless, no access key
 the proxy check, and A365-observed tool abuse is just another producer into the same set. The
 kill switch does not change.
 
+> For the full Agent 365 + Purview + Defender junction (pillar-by-pillar, Purview's audit/DSPM/DLP
+> role and its inline boundaries, and why the proxy still exists) see **`a365-purview-junction.md`**.
+
 ---
 
 ## 3. Implementation plan
