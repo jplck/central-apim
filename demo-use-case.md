@@ -100,7 +100,7 @@ for all agent interactions" pattern made concrete.
 
 ### 2.4 The kill signal — shape and path to the store
 
-Two producer lanes converge on one action (*add the blueprint appId to `revocations`*):
+Producer lanes, all converging on one action (*add the blueprint appId to `revocations`*):
 
 - **Defender for Cloud — AI threat protection** (GA). Alerts on Azure OpenAI / AI inference:
   jailbreak (`AI.Azure_Jailbreak.*`), credential theft, ASCII-smuggling / indirect injection,
@@ -114,6 +114,14 @@ Two producer lanes converge on one action (*add the blueprint appId to `revocati
   *Streaming API → Event Hub* (`AlertInfo` GA, `BehaviorInfo` preview), schema
   `{records:[{time,tenantId,category,properties}]}`. Detections carry the Entra Agent ID.
   Docs: `defender-xdr/streaming-api-event-hub`, `defender-xdr/supported-event-types`.
+- **Microsoft Purview / Agent 365 *Govern*.** Agents **auto-enroll** into Purview **Audit**;
+  every AI interaction emits UAL operations — `AIInvokeAgent`, `AIExecuteTool`, `AIInferenceCall`,
+  and **`AIGuardrail`** (a guardrail / DLP trip — the kill-worthy one). DLP-match, DSPM-for-AI,
+  and IRM findings feed the same way. **Path:** *Office 365 Management Activity API* or a
+  **Sentinel** connector → ingestor → `revocations`. ⚠️ **Async only** — Purview has **no
+  synchronous DLP REST** to score a prompt, so inline content checks stay Content Safety Prompt
+  Shields / MIP (`proxy.md` §6.1); Purview is a *revoke producer*, not an inline call.
+  Docs: `purview/ai-agent-365`, `purview/audit-search`. Deep-dive: `a365-purview-junction.md` §4.
 - **Agent 365 / Entra admin action.** SecOps disables the blueprint (`accountEnabled=false`).
   Most A365 controls have **no REST API** (portal/PowerShell only), so we don't call A365 — we
   consume the *side effect*: the Defender alert above, or an Entra audit / Sentinel event.
@@ -135,6 +143,11 @@ Two producer lanes converge on one action (*add the blueprint appId to `revocati
 - **Complementary, not redundant.** Entra disable stops *new* sessions; the proxy stops *live*
   ones. Together they fully contain the identity — the exact composition Microsoft's own guidance
   implies but doesn't enforce at a custom gateway.
+- **Completes Agent 365 across all three of its engines.** A365 orchestrates Entra + Defender +
+  Purview and **inherits each one's inline gap** — Entra's token coast, Defender's inline block
+  limited to Work IQ MCP / Copilot Studio / Foundry, and Purview's DLP limited to M365 Copilot
+  surfaces (no sync REST). The proxy is the single inline enforcement point covering the *union*
+  for BYO / direct / non-M365 callers on the model and MCP routes. Why: `a365-purview-junction.md` §6.
 
 ### 2.6 Future: the Agent 365 tools MCP feature
 
