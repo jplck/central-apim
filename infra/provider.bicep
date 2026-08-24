@@ -6,9 +6,6 @@ param location string
 param token string
 param tags object
 
-@description('Client IDs of the consumer Foundry managed identities allowed through the gateway.')
-param consumerClientIds array
-
 @description('Backend BASE URL of the energy MCP Container App (no path; the /mcp transport endpoint is set on the MCP server). Empty => the MCP route is not added to the gateway.')
 param mcpBackendUrl string = ''
 
@@ -83,17 +80,10 @@ resource chatCompletions 'Microsoft.ApiManagement/service/apis/operations@2024-0
   }
 }
 
-// API-level policy: validate the caller is one of the allowed consumer identities,
-// then swap to APIM's own managed identity to reach the backend Foundry keyless.
-var allowedAppIds = join(map(consumerClientIds, id => '<application-id>${id}</application-id>'), '')
+// API-level policy: run the governance kill switch, then swap to APIM's own managed identity to
+// reach the backend Foundry keyless. (Entra-token validation removed — see governanceFragmentXml.)
 
-// The Entra-token validation shared by every gateway API: accept the allowed consumer identities
-// (by client id) plus the hosted agent's Entra Agent ID *blueprint* appid (gateway-agent-appid,
-// set post-deploy by create_hosted_agents.py; harmless placeholder until then). Audience =
-// cognitiveservices. Lives in the reusable fragment below.
-var validateXml = '<validate-azure-ad-token tenant-id="${tenant().tenantId}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized. A valid Entra token from an allowed Foundry resource is required."><client-application-ids>${allowedAppIds}<application-id>{{gateway-agent-appid}}</application-id></client-application-ids><audiences><audience>https://cognitiveservices.azure.com</audience></audiences></validate-azure-ad-token>'
-
-// Phase 1 kill switch (proxy.md): after validating the caller, ask the governance proxy whether
+// Phase 1 kill switch (proxy.md): ask the governance proxy whether
 // this caller's Entra appid is revoked, and fail closed (403) on deny / non-200 / unreachable.
 // Inert until the proxy deploy hook points the `governance-proxy-host` named value at the proxy.
 // We store the *host* (no scheme), not a full URL: a `//` inside an APIM `@()` expression is
@@ -103,10 +93,12 @@ var validateXml = '<validate-azure-ad-token tenant-id="${tenant().tenantId}" hea
 // absolute URL, which APIM statically validates even inside a <choose> that never runs.
 var killSwitchXml = '<set-variable name="agentId" value="@{ var jwt = context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;, &quot;&quot;).Replace(&quot;Bearer &quot;, &quot;&quot;).AsJwt(); return jwt == null ? &quot;unknown&quot; : (jwt.Claims.GetValueOrDefault(&quot;appid&quot;) ?? jwt.Claims.GetValueOrDefault(&quot;azp&quot;) ?? &quot;unknown&quot;); }" /><choose><when condition="@(&quot;{{governance-proxy-host}}&quot; != &quot;disabled.invalid&quot;)"><send-request mode="new" response-variable-name="killResp" timeout="5" ignore-error="true"><set-url>https://{{governance-proxy-host}}/check</set-url><set-method>POST</set-method><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>@{ return new JObject(new JProperty("agent_id", (string)context.Variables["agentId"])).ToString(); }</set-body></send-request><choose><when condition="@{ var r = context.Variables.GetValueOrDefault&lt;IResponse&gt;(&quot;killResp&quot;); if (r == null || r.StatusCode != 200) { return true; } try { return ((string)r.Body.As&lt;JObject&gt;(true)[&quot;verdict&quot;]) != &quot;allow&quot;; } catch { return true; } }"><return-response><set-status code="403" reason="Forbidden" /><set-header name="Content-Type" exists-action="override"><value>application/json</value></set-header><set-body>{"error":"agent revoked or governance proxy unavailable"}</set-body></return-response></when></choose></when></choose>'
 
-// The reusable governance fragment: validate the Entra token, then run the kill switch. Included
-// by every API (foundry models + energy MCP) so the same auth + revocation check applies once,
-// gateway-wide. Change governance here and every route inherits it.
-var governanceFragmentXml = '<fragment>${validateXml}${killSwitchXml}</fragment>'
+// The reusable governance fragment. Identity validation (validate-azure-ad-token) was REMOVED: the
+// hosted agent's MCP client can't mint a cognitiveservices-audience token that passes it (returned
+// 401), so the gateway no longer gates identity. Only the dynamic kill switch remains, applied to
+// every API. Re-add validate-azure-ad-token to individual API policies standalone if a specific
+// route needs identity gating.
+var governanceFragmentXml = '<fragment>${killSwitchXml}</fragment>'
 
 // Foundry models API: governance fragment, then swap to APIM's managed identity for the backend.
 var apiPolicyXml = '<policies><inbound><base /><include-fragment fragment-id="governance-check" /><authentication-managed-identity resource="https://cognitiveservices.azure.com" /><set-backend-service base-url="${foundryA.properties.endpoint}openai" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'

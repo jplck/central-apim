@@ -74,7 +74,6 @@ module provider 'provider.bicep' = {
     location: location
     token: token
     tags: tags
-    consumerClientIds: identities.outputs.clientIds
     // Wire the energy MCP route's backend to the MCP Container App. Native APIM MCP servers take the
     // backend BASE url (transport endpoint /mcp is set in mcpProperties). Referencing this output
     // makes Bicep deploy the (self-contained) mcp module before provider. Empty => no MCP route.

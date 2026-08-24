@@ -5,8 +5,9 @@ through the shared APIM gateway (BYOM route "<connection>/<model>", e.g. apim-sh
 and looks up real customer data via the energy MCP server — also fronted by the same gateway,
 so both the model and the tools go consumer project -> APIM -> backend, keyless.
 
-Identity: the agent authenticates with its Foundry-injected Microsoft Entra Agent ID; the
-gateway allows its blueprint appid (wired by infra/hooks/create_hosted_agents.py).
+Identity: the agent authenticates with its Foundry-injected Microsoft Entra Agent ID. The
+gateway no longer *validates* that identity, but the governance kill switch reads the token's
+blueprint appid to enforce revocations, so the agent still sends its bearer token on MCP calls.
 
 Env (injected by the deploy hook via the hosted-agent definition):
   AZURE_AI_PROJECT_ENDPOINT       this project's Foundry endpoint
@@ -14,10 +15,7 @@ Env (injected by the deploy hook via the hosted-agent definition):
   MCP_GATEWAY_URL                 the energy MCP route on the gateway (optional)
 """
 
-import base64
-import json
 import os
-import sys
 
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework_foundry import FoundryChatClient
@@ -26,43 +24,16 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 credential = DefaultAzureCredential()  # the agent's Foundry-injected Microsoft Entra Agent ID
 
-_seen_appids = set()
-
-
-def _log_token_identity(token):
-    """Log the identity claims of the token we send to the gateway, once per distinct appid.
-
-    The gateway allowlists by `appid`, so this reveals exactly which identity each invocation path
-    presents — e.g. the Foundry-injected Agent ID (blueprint) via the Responses endpoint vs. a
-    different managed identity via the portal playground. Claims (appid/aud/oid/sub) aren't secrets;
-    the raw token is never logged. Never breaks the request over a log line.
-    """
-    try:
-        payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)  # pad base64url
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-        appid = claims.get("appid") or claims.get("azp") or "unknown"
-        if appid in _seen_appids:
-            return
-        _seen_appids.add(appid)
-        print(f"[gateway-agent] MCP token identity: appid={appid} aud={claims.get('aud')} "
-              f"oid={claims.get('oid')} sub={claims.get('sub')} "
-              f"(allow this appid in gateway-agent-appid to pass validate-azure-ad-token)",
-              file=sys.stderr, flush=True)
-    except Exception:
-        pass
-
 
 def _mcp_headers(_kwargs):
     token = gateway_token()
-    _log_token_identity(token)
     return {"Authorization": f"Bearer {token}"}
 
 
-# The energy MCP server, reached through the SAME APIM gateway as the model. The gateway validates
-# an Entra token (audience cognitiveservices) and runs the governance kill switch, so inject the
-# agent's Agent ID bearer token on every MCP call. The host server connects the tool lazily on the
-# first request. No MCP_GATEWAY_URL => no tools (plain chat agent).
+# The energy MCP server, reached through the SAME APIM gateway as the model. The gateway no longer
+# validates identity, but its governance kill switch reads the caller's blueprint appid from the
+# bearer token to enforce revocations, so inject the agent's Agent ID token on every MCP call. The
+# host server connects the tool lazily on the first request. No MCP_GATEWAY_URL => no tools.
 tools = []
 mcp_url = os.environ.get("MCP_GATEWAY_URL")
 if mcp_url:
