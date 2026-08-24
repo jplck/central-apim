@@ -201,27 +201,6 @@ needs nothing new — it directly shows the coasting-token gap being closed.
   set-adds it to `revocations` (idempotent). Reuse the proxy's App Config client code.
 - Result: Defender alert → revocation → gateway block with **no human in the loop**, in seconds.
 
-### Enrichment — make the alert name the agent (feature-flagged)
-
-A raw jailbreak alert may not carry the caller's `appid`, and Phase 2 revokes on exactly that.
-Azure OpenAI's **`user_security_context`** closes it: the hosted agent stamps its own identity onto
-every model call, and Defender copies it onto the alert it raises.
-
-- **Where:** `src/hosted-agent/agent.py` adds `user_security_context = {application_name,
-  end_user_id}` via `extra_body` on the Responses request. `end_user_id` is the agent's **blueprint
-  appid** — the same value `revocations` keys on, no PII.
-- **Gate:** the App Config feature flag **`defender-usercontext`**. Off (or unreadable, or proxy not
-  deployed) ⇒ no enrichment, agent unaffected — it fail-safes to off. The agent reads the flag at
-  startup via its own identity (App Configuration Data Reader, granted by the deploy hook).
-- **Test e2e:**
-  1. `az appconfig feature set --name <appcs> --feature defender-usercontext --yes` then restart the
-     agent (re-run the postprovision hook or bounce the container) so it re-reads the flag.
-  2. Send the agent a jailbreak prompt → Prompt Shields blocks it → Defender raises a *Jailbreak
-     attempt* alert **stamped with the agent's appid**. (Or use Defender → **Sample alerts** for a
-     safe simulated one that still flows through Continuous Export.)
-  3. Phase 2's consumer (or, today, `python src/proxy/revoke.py --add <appid>`) writes the appid to
-     `revocations` → the next gateway call returns **403**. Loop closed.
-
 ### Phase 3 — expansion (as needed)
 
 - **Per-instance kill:** have the APIM policy also send `oid`; revoke at blueprint *or* instance
