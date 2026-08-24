@@ -35,6 +35,8 @@ from azure.identity import AzureDeveloperCliCredential
 AGENT_NAME = os.environ.get("HOSTED_AGENT_NAME", "gateway-hosted")
 # Foundry User: lets the agent's own identity call the project's model (the BYOM route).
 FOUNDRY_USER_ROLE_ID = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
+# App Configuration Data Reader: lets the agent read the defender-usercontext feature flag.
+APP_CONFIG_READER_ROLE_ID = "516239f1-63e1-4d78-a4de-a74fb236a071"
 CONTEXT = Path(__file__).resolve().parents[2] / "src" / "hosted-agent"
 ARM = "https://management.azure.com"
 ACR_API = "2019-06-01-preview"
@@ -162,24 +164,18 @@ def _build_image(cred, acr_id, login_server):
     raise RuntimeError(f"ACR build did not finish in time (run {run_id})")
 
 
-def _assignment_name(scope, principal_id):
+def _assignment_name(scope, principal_id, role_id=FOUNDRY_USER_ROLE_ID):
     """Deterministic role-assignment guid so retries are idempotent."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{scope}|{principal_id}|{FOUNDRY_USER_ROLE_ID}"))
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{scope}|{principal_id}|{role_id}"))
 
 
-def _assign_model_access(cred, principal_id, scope):
-    """Best-effort: grant the agent's identity Foundry User on its project via ARM REST.
-
-    Hosted agents already get default model-inferencing access through the project endpoint,
-    so this is belt-and-suspenders — it must never fail the deploy. A brand-new agent SP can
-    also be unreplicated in AAD (ARM then returns a spurious 500), so retry a few times, then
-    warn and move on.
-    """
-    print(f"Granting the agent identity Foundry User at {scope} (best-effort)...", flush=True)
+def _assign_role(cred, principal_id, scope, role_id, role_name, on_fail):
+    """Idempotent best-effort role assignment via ARM REST. A brand-new agent SP can be unreplicated
+    in AAD (ARM then returns a spurious 500), so retry a few times, then hand off to `on_fail`."""
     sub = scope.split("/")[2]
-    role_def = f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleDefinitions/{FOUNDRY_USER_ROLE_ID}"
+    role_def = f"/subscriptions/{sub}/providers/Microsoft.Authorization/roleDefinitions/{role_id}"
     url = (f"{ARM}{scope}/providers/Microsoft.Authorization/roleAssignments/"
-           f"{_assignment_name(scope, principal_id)}?api-version=2022-04-01")
+           f"{_assignment_name(scope, principal_id, role_id)}?api-version=2022-04-01")
     payload = json.dumps({"properties": {
         "roleDefinitionId": role_def,
         "principalId": principal_id,
@@ -190,11 +186,11 @@ def _assign_model_access(cred, principal_id, scope):
         status, body = _http("PUT", url, token=_arm_token(cred), data=payload,
                              headers={"Content-Type": "application/json"})
         if status in (200, 201):
-            print("  granted.", flush=True)
+            print(f"  granted {role_name}.", flush=True)
             return
         text = json.dumps(body).lower() if isinstance(body, (dict, list)) else str(body).lower()
         if status == 409 or "roleassignmentexists" in text or "already exists" in text:
-            print("  role assignment already exists — skipping.", flush=True)
+            print(f"  {role_name} already assigned — skipping.", flush=True)
             return
         transient = status >= 500 or "principalnotfound" in text or "does not exist in the directory" in text
         if attempt < attempts and transient:
@@ -202,10 +198,44 @@ def _assign_model_access(cred, principal_id, scope):
                   f"waiting {DELAY}s...", flush=True)
             time.sleep(DELAY)
             continue
-        print(f"  ! could not grant Foundry User ({status}) — continuing; the agent already has default "
-              f"model-inferencing access via its project endpoint. Grant manually only if it needs extra "
-              f"project/resource access.", flush=True)
+        on_fail(status)
         return
+
+
+def _assign_model_access(cred, principal_id, scope):
+    """Best-effort: grant the agent's identity Foundry User on its project via ARM REST.
+
+    Hosted agents already get default model-inferencing access through the project endpoint,
+    so this is belt-and-suspenders — it must never fail the deploy.
+    """
+    print(f"Granting the agent identity Foundry User at {scope} (best-effort)...", flush=True)
+    _assign_role(
+        cred, principal_id, scope, FOUNDRY_USER_ROLE_ID, "Foundry User",
+        lambda status: print(
+            f"  ! could not grant Foundry User ({status}) — continuing; the agent already has default "
+            f"model-inferencing access via its project endpoint. Grant manually only if it needs extra "
+            f"project/resource access.", flush=True),
+    )
+
+
+def _assign_app_config_reader(cred, principal_id):
+    """Best-effort: grant the agent identity App Configuration Data Reader on the proxy's store so it
+    can read the `defender-usercontext` feature flag. No-op when the proxy isn't deployed. Non-fatal —
+    the flag fail-safes to off, so the agent runs fine without it (just no Defender enrichment)."""
+    sub = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
+    env = os.environ.get("AZURE_ENV_NAME", "").strip()
+    store = os.environ.get("PROXY_APP_CONFIG_NAME", "").strip()
+    if not (sub and env and store and principal_id):
+        return  # proxy disabled or outputs missing — nothing to grant
+    scope = (f"/subscriptions/{sub}/resourceGroups/rg-{env}-provider"
+             f"/providers/Microsoft.AppConfiguration/configurationStores/{store}")
+    print(f"Granting the agent identity App Configuration Data Reader at {scope} (best-effort)...", flush=True)
+    _assign_role(
+        cred, principal_id, scope, APP_CONFIG_READER_ROLE_ID, "App Configuration Data Reader",
+        lambda status: print(
+            f"  ! could not grant App Configuration Data Reader ({status}) — the defender-usercontext "
+            f"flag will read as off. Grant manually to enable Defender enrichment.", flush=True),
+    )
 
 
 def _allow_agent_appid(cred, appid):
@@ -246,6 +276,11 @@ def _deploy(endpoint, arm_id, image, model, cred):
     mcp_url = os.environ.get("MCP_GATEWAY_URL", "").strip()
     if mcp_url:
         env_vars["MCP_GATEWAY_URL"] = mcp_url
+    # Where the agent reads the defender-usercontext feature flag (empty unless enableProxy). Keyless
+    # via the agent's own identity; agent.py fail-safes to no enrichment when this is unset.
+    app_config = os.environ.get("PROXY_APP_CONFIG_ENDPOINT", "").strip()
+    if app_config:
+        env_vars["APP_CONFIG_ENDPOINT"] = app_config
     definition = HostedAgentDefinition(
         container_configuration=ContainerConfiguration(image=image),
         # cpu/memory are strings and must match a valid tier exactly. Valid tiers:
@@ -282,6 +317,8 @@ def _deploy(endpoint, arm_id, image, model, cred):
         print(f"  ! could not resolve the agent identity; grant Foundry User to '{AGENT_NAME}' manually.", flush=True)
     else:
         print("  ! project ARM id missing; grant Foundry User to the agent identity manually.", flush=True)
+    if pid:
+        _assign_app_config_reader(cred, pid)  # no-op unless the proxy (App Config store) is deployed
     return bp_appid
 
 
