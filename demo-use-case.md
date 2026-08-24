@@ -258,6 +258,15 @@ az appconfig kv set -n "$CFG" --key revocations --value '[]' --yes --auth-mode l
 The consumer starts at `@latest`, so send the test *after* the proxy is running (it is, post-deploy).
 Proxy log line to watch: `[proxy] revoked smoke-test-appid from Defender alert`.
 
+**Operator dashboard.** `enableProxy` also deploys a second Container App (`src/dashboard`) in the
+same environment — `azd env get-value PROXY_DASHBOARD_URI`. It reuses the proxy's managed identity
+(App Config Data Owner + Event Hubs Data Receiver) and tails the alert Event Hub on its own
+`dashboard` consumer group, streaming each alert to the browser over a **WebSocket** (`/ws`), and
+read/writes the `revocations` key (block / unblock, `/api/revocations`). So the smoke test above is
+visible live, and an operator can drive the kill switch by hand. It is **unauthenticated** (public
+demo surface that can write revocations) — front it with Container Apps auth or IP restrictions for
+anything real.
+
 ### Phase 3 — expansion (as needed)
 
 - **Per-instance kill:** have the APIM policy also send `oid`; revoke at blueprint *or* instance

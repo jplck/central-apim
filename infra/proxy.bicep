@@ -123,6 +123,14 @@ resource consumerGroup 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2
   name: consumerGroupName
 }
 
+// The dashboard is an independent reader of the same alerts, so it gets its own consumer group
+// (a second consumer on the proxy's group would compete for partitions instead of both seeing all).
+var dashboardConsumerGroupName = 'dashboard'
+resource dashboardConsumerGroup 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2024-01-01' = {
+  parent: eventHub
+  name: dashboardConsumerGroupName
+}
+
 var eventHubsDataReceiverRoleId = 'a638d3c7-ab3a-418d-83e6-5f17a39d4fde' // Azure Event Hubs Data Receiver
 resource ehReceiver 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: ehNamespace
@@ -188,6 +196,46 @@ resource aca 'Microsoft.App/containerApps@2024-03-01' = {
   dependsOn: [ pull, dataOwner, ehReceiver ]
 }
 
+// Admin dashboard: separate Container App in the SAME environment, reusing the proxy's identity
+// (App Config Data Owner + Event Hubs Data Receiver) and ACR. Tails the alert stream on its own
+// consumer group and pushes it to the browser over a WebSocket; also read/writes `revocations`.
+// A later hook builds src/dashboard and swaps it (+ real port 8080) onto this app.
+resource dashboard 'Microsoft.App/containerApps@2024-03-01' = {
+  name: 'ca-dashboard-${token}'
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${uami.id}': {} }
+  }
+  properties: {
+    managedEnvironmentId: env.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: 80 // hook swaps to 8080 with the real image; WebSocket rides the same ingress
+        transport: 'auto'
+      }
+      registries: [ { server: acr.properties.loginServer, identity: uami.id } ]
+    }
+    template: {
+      containers: [ {
+        name: 'dashboard'
+        image: placeholderImage
+        resources: { cpu: json('0.5'), memory: '1Gi' }
+        env: [
+          { name: 'APP_CONFIG_ENDPOINT', value: appconfig.properties.endpoint }
+          { name: 'AZURE_CLIENT_ID', value: uami.properties.clientId }
+          { name: 'EVENTHUB_FULLY_QUALIFIED_NAMESPACE', value: '${ehNamespace.name}.servicebus.windows.net' }
+          { name: 'EVENTHUB_NAME', value: eventHub.name }
+          { name: 'EVENTHUB_CONSUMER_GROUP', value: dashboardConsumerGroupName }
+        ]
+      } ]
+      scale: { minReplicas: 1, maxReplicas: 1 } // single replica: in-process WS fan-out, no backplane
+    }
+  }
+  dependsOn: [ pull, dataOwner, ehReceiver ]
+}
 output acrId string = acr.id
 output acrLoginServer string = acr.properties.loginServer
 output appId string = aca.id
@@ -197,3 +245,5 @@ output eventHubNamespace string = ehNamespace.name
 output eventHubName string = eventHub.name
 output eventHubNamespaceFqdn string = '${ehNamespace.name}.servicebus.windows.net'
 output uri string = 'https://${aca.properties.configuration.ingress.fqdn}'
+output dashboardAppId string = dashboard.id
+output dashboardUri string = 'https://${dashboard.properties.configuration.ingress.fqdn}'

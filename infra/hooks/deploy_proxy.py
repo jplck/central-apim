@@ -18,7 +18,9 @@ from azure.identity import AzureDeveloperCliCredential
 import deploy_mcp as d  # reuse _build_image / _update_app / _http / _arm_token / _require
 
 CONTEXT = Path(__file__).resolve().parents[2] / "src" / "proxy"
+DASHBOARD_CONTEXT = Path(__file__).resolve().parents[2] / "src" / "dashboard"
 REPO = "governance-proxy"
+DASHBOARD_REPO = "governance-dashboard"
 TARGET_PORT = 8080  # server.py listens here; bicep provisions the placeholder on 80
 APIM_API = "2024-05-01"
 
@@ -60,6 +62,14 @@ def main():
     proxy_uri = os.environ.get("PROXY_URI", "").strip()
     host = fqdn or (proxy_uri.split("://", 1)[-1].split("/")[0] if proxy_uri else "")
     _set_named_value(cred, host)
+
+    # Admin dashboard: same ACR, its own image + Container App (event stream + revocations editor).
+    dash_app_id = os.environ.get("PROXY_DASHBOARD_APP_ID", "").strip()
+    if dash_app_id:
+        dash_image = d._build_image(cred, acr_id, login_server, context=DASHBOARD_CONTEXT, repo=DASHBOARD_REPO)
+        d._update_app(cred, dash_app_id, dash_image, port=TARGET_PORT, uri_suffix="/",
+                      label="Governance dashboard")
+
     print("Done. The governance proxy is deployed and the APIM kill switch is armed.")
 
 

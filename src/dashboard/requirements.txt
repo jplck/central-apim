@@ -1,0 +1,6 @@
+# uvicorn[standard] pulls in `websockets` — needed for the /ws live event stream.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+azure-appconfiguration>=1.5
+azure-identity>=1.16
+azure-eventhub>=5.11

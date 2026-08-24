@@ -212,3 +212,8 @@ output PROXY_ACR_LOGIN_SERVER string = enableProxy ? proxy.outputs.acrLoginServe
 output PROXY_APP_ID string = enableProxy ? proxy.outputs.appId : ''
 #disable-next-line BCP318
 output PROXY_URI string = enableProxy ? proxy.outputs.uri : ''
+// Admin dashboard (event stream + revocations editor), second Container App in the proxy's env.
+#disable-next-line BCP318
+output PROXY_DASHBOARD_APP_ID string = enableProxy ? proxy.outputs.dashboardAppId : ''
+#disable-next-line BCP318
+output PROXY_DASHBOARD_URI string = enableProxy ? proxy.outputs.dashboardUri : ''
