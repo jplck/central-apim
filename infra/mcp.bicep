@@ -98,3 +98,4 @@ output acrId string = acr.id
 output acrLoginServer string = acr.properties.loginServer
 output appId string = aca.id
 output uri string = 'https://${aca.properties.configuration.ingress.fqdn}/mcp'
+output baseUri string = 'https://${aca.properties.configuration.ingress.fqdn}'

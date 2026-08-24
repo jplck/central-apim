@@ -70,11 +70,11 @@ def _tar_context(context: Path = CONTEXT) -> bytes:
     return buf.getvalue()
 
 
-def _build_image(cred, acr_id, login_server) -> str:
+def _build_image(cred, acr_id, login_server, context: Path = CONTEXT, repo: str = REPO) -> str:
     """Build + push the image inside ACR via REST (equivalent of `az acr build`)."""
     tag = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    repo_tag = f"{REPO}:{tag}"
-    print(f"Building {login_server}/{repo_tag} from {CONTEXT} via ACR REST...", flush=True)
+    repo_tag = f"{repo}:{tag}"
+    print(f"Building {login_server}/{repo_tag} from {context} via ACR REST...", flush=True)
 
     status, body = _http("POST", f"{ARM}{acr_id}/listBuildSourceUploadUrl?api-version={ACR_API}",
                          token=_arm_token(cred), data=b"")
@@ -82,7 +82,7 @@ def _build_image(cred, acr_id, login_server) -> str:
         raise RuntimeError(f"listBuildSourceUploadUrl failed ({status}): {body}")
     upload_url, relative_path = body["uploadUrl"], body["relativePath"]
 
-    status, body = _http("PUT", upload_url, data=_tar_context(), headers={"x-ms-blob-type": "BlockBlob"})
+    status, body = _http("PUT", upload_url, data=_tar_context(context), headers={"x-ms-blob-type": "BlockBlob"})
     if status >= 400:
         raise RuntimeError(f"context upload failed ({status}): {body}")
 
@@ -148,8 +148,11 @@ def _put_body(app: dict, image: str, port: int) -> dict:
     }
 
 
-def _update_app(cred, app_id, image, port=TARGET_PORT) -> None:
-    """Swap the built image + real target port onto the container app, then wait for it."""
+def _update_app(cred, app_id, image, port=TARGET_PORT, uri_suffix="/mcp", label="MCP server") -> str:
+    """Swap the built image + real target port onto the container app, then wait for it.
+
+    Returns the app FQDN once it reaches Succeeded.
+    """
     status, app = _http("GET", f"{ARM}{app_id}?api-version={APP_API}", token=_arm_token(cred))
     if status >= 400 or not isinstance(app, dict):
         raise RuntimeError(f"GET container app failed ({status}): {app}")
@@ -166,8 +169,8 @@ def _update_app(cred, app_id, image, port=TARGET_PORT) -> None:
         state = (app.get("properties") or {}).get("provisioningState") if isinstance(app, dict) else None
         if state == "Succeeded":
             fqdn = app["properties"]["configuration"]["ingress"].get("fqdn", "")
-            print(f"+ MCP server live at https://{fqdn}/mcp", flush=True)
-            return
+            print(f"+ {label} live at https://{fqdn}{uri_suffix}", flush=True)
+            return fqdn
         if state in ("Failed", "Canceled"):
             raise RuntimeError(f"container app update {state}")
         time.sleep(10)

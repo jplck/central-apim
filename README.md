@@ -117,19 +117,27 @@ deployed to a consumer project and calls the shared model.
 - **Infra** (`enableHostedAgents=true`, default): a shared **ACR** (provider RG), a
   **capability host** (`kind: Agents`, public hosting) on the hosting consumer, a
   `ContainerRegistry` connection, and **AcrPull** for its identity — all keyless.
-- **Container** (`src/hosted-agent/agent.py`): ~15 lines —
-  `FoundryChatClient(model="apim-shared/gpt-4.1").as_agent(...)` served by
+- **Container** (`src/hosted-agent/agent.py`): ~40 lines — an **energy-supplier customer
+  agent**. `FoundryChatClient(model="apim-shared/gpt-4.1").as_agent(...)` served by
   `ResponsesHostServer`. Its model calls route project → APIM → provider A, exactly like
-  the prompt agent, just from inside a container. `requirements.txt` **must** include
-  `mcp` even though this agent has no tools: `agent_framework_foundry_hosting` imports it
-  unconditionally, and omitting it crashes the container on startup (the invoke then fails
-  with `424 session_not_ready` because `/readiness` never serves).
+  the prompt agent, just from inside a container. When `MCP_GATEWAY_URL` is set it also
+  attaches the native **`MCPStreamableHTTPTool`** pointed at the `energy-mcp` route on the
+  **same gateway**, injecting its Entra Agent ID bearer token per request via
+  `header_provider` — so both model *and* tools go project → APIM → backend, keyless. The
+  gateway allows the agent by its **blueprint appid** (see below). `requirements.txt`
+  includes `mcp` (the tool's transport; `agent_framework_foundry_hosting` also imports it
+  unconditionally, so omitting it crashes the container on startup).
 - **Deploy** (`infra/hooks/create_hosted_agents.py`): builds the image on ACR via ARM REST
   (`listBuildSourceUploadUrl` → upload → `scheduleRun`) as the **azd** identity — no `az`
   CLI, so it works even if `az` and `azd` are logged into different identities — then
   `create_version(HostedAgentDefinition(...))`. It also tries (best-effort) to grant the
   agent's own identity **Foundry User** on its project; that grant is optional — a hosted
-  agent already has default model-inferencing access via its project endpoint.
+  agent already has default model-inferencing access via its project endpoint. When
+  `enableMcp` is on it also injects `MCP_GATEWAY_URL` into the agent and sets the APIM
+  **`gateway-agent-appid`** named value to the agent's Entra Agent ID **blueprint appid**,
+  so the shared `governance-check` fragment's `validate-azure-ad-token` admits the agent's
+  MCP calls. All instances of a blueprint share one appid, so one value covers them all;
+  both steps are best-effort and never fail the deploy.
 
 Invoke it (hosted agents use their **own agent endpoint**, not `agent_reference`):
 
@@ -272,11 +280,62 @@ back end. **On by default** (`enableMcp=true`); set it to `false` to skip.
   into the ACR via ARM REST as the **azd** identity (no `az` CLI), then swaps the real image
   and target port 8000 onto the app. The live URL is the `MCP_URI` output
   (`https://<app>.<region>.azurecontainerapps.io/mcp`).
+- **Gateway route** (`infra/provider.bicep`): the server is also fronted by the shared APIM
+  gateway as a **native APIM MCP server** (`type: 'mcp'`, streamable-HTTP passthrough — not a
+  generic HTTP API), so APIM is MCP-protocol-aware: it surfaces the backend's tools as
+  first-class API-tool sub-resources and can be registered/discovered in API Center. It applies
+  the same `governance-check` policy fragment (Entra token validation + kill switch) as the
+  models API. The MCP container itself is unauth, so **APIM is its auth + governance enforcement
+  point**; callers present the same Entra token they use for the models route. Client endpoint:
+  `https://<apim>/energy-mcp/mcp` (the `MCP_GATEWAY_URL` output); backend transport endpoint
+  `/mcp` is set in `mcpProperties`. Requires APIM api-version `2025-09-01-preview` on a tier that
+  supports MCP servers (this demo uses Standard v2).
 - **Agent 365 (BYO MCP)**: `infra/hooks/register_mcp_a365.sh` runs after deploy and does
   Phase 0 (`a365 develop-mcp evaluate`) + Phase 1 (NoAuth `register-external-mcp-server`).
   Opt-in and non-fatal: `azd env set ENABLE_A365_MCP_REGISTER true` (or `dryrun`), needs
   `a365` ≥1.1.165-preview + `az login`. Full plan and the EntraOAuth hardening path:
   [`mcp_tools_a365.md`](mcp_tools_a365.md).
+
+## Demo: dynamic kill switch (governance proxy) — Phase 1
+
+Revoke any consumer agent's access to the gateway **as data, with no redeploy and no policy
+edit** — one `az appconfig kv set`. This is Phase 1 of [`proxy.md`](proxy.md). **Off by
+default**; enable with `azd env set ENABLE_PROXY true` before `azd up`.
+
+- **App** (`src/proxy/`): a ~120-line FastAPI decision service. `POST /check {"agent_id": ...}`
+  → `{"verdict": "allow"|"deny"}`. It polls App Configuration key `revocations` (a JSON array
+  of Entra `appid`s) every 10s and **fails closed** until the first load succeeds. Run the
+  logic self-test: `python src/proxy/server.py --self-test`.
+- **Infra** (`infra/proxy.bicep`, provider RG): keyless and self-contained — an **App
+  Configuration** store (the revocation list), a user-assigned identity (**App Configuration
+  Data Reader**), and a Container App. The **deployer** gets **App Configuration Data Owner**
+  so you can edit the list from the CLI.
+- **Gateway** (`infra/provider.bicep`): the governance check — `validate-azure-ad-token` + the
+  kill switch — lives in one reusable APIM **policy fragment** (`governance-check`) that every
+  API includes via `<include-fragment>` (the models API and the `energy-mcp` API today). When
+  armed, the kill switch reads the caller's `appid` from the validated token and does a
+  synchronous `send-request` to the proxy's `/check`. Non-`allow` (or any proxy error / timeout)
+  → **403**. The `governance-proxy-host` named value defaults to a non-resolving sentinel, so the
+  whole block is **skipped** (zero overhead) unless the proxy is deployed; the `deploy_proxy.py`
+  postprovision hook arms it with the live host.
+
+**Kill a consumer** (e.g. consumer B) — takes effect within ~10s, no redeploy:
+
+```bash
+# The gateway-accepted consumer appids (index 0 = B, 1 = C):
+azd env get-value CONSUMER_CLIENT_IDS
+
+APPCS=$(azd env get-value PROXY_APP_CONFIG_NAME)
+az appconfig kv set --name "$APPCS" --key revocations \
+  --value '["<consumer-b-appid>"]' --auth-mode login --yes
+```
+
+**Un-kill** — set it back to an empty list:
+
+```bash
+az appconfig kv set --name "$APPCS" --key revocations \
+  --value '[]' --auth-mode login --yes
+```
 
 ## Notes / assumptions
 

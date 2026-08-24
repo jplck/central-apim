@@ -35,6 +35,9 @@ param enableDatabricks bool = false
 @description('Deploy the demo "energy customer-profile" MCP server on Azure Container Apps (self-contained: own registry, identity, environment). The postprovision hook builds the image and swaps it onto the app. See README.')
 param enableMcp bool = true
 
+@description('Deploy Phase 1 of the governance proxy (proxy.md): a Container App (ACS host) that APIM calls synchronously to enforce a dynamic, data-driven kill switch, plus the Azure App Configuration store it reads revocations from. Self-contained and off by default; the proxy image is swapped on by a later hook.')
+param enableProxy bool = false
+
 var token = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
 
@@ -71,7 +74,11 @@ module provider 'provider.bicep' = {
     location: location
     token: token
     tags: tags
-    consumerClientIds: identities.outputs.clientIds
+    // Wire the energy MCP route's backend to the MCP Container App. Native APIM MCP servers take the
+    // backend BASE url (transport endpoint /mcp is set in mcpProperties). Referencing this output
+    // makes Bicep deploy the (self-contained) mcp module before provider. Empty => no MCP route.
+    #disable-next-line BCP318 // guarded by enableMcp; mcp is deployed whenever this is read.
+    mcpBackendUrl: enableMcp ? mcp.outputs.baseUri : ''
   }
 }
 
@@ -131,6 +138,14 @@ module mcp 'mcp.bicep' = if (enableMcp) {
   params: { location: location, token: token, tags: tags }
 }
 
+// 6. Optional Phase 1 of proxy.md: the governance-proxy Container App (an ACS host) + the
+//    Azure App Configuration revocation store it reads. Self-contained in the provider RG,
+//    provisioned with a placeholder image; a later hook builds the proxy image and swaps it on.
+module proxy 'proxy.bicep' = if (enableProxy) {
+  scope: rgProvider
+  params: { location: location, token: token, tags: tags, deployerPrincipalId: principalId }
+}
+
 output PROVIDER_FOUNDRY_NAME string = provider.outputs.foundryName
 output PROVIDER_FOUNDRY_ENDPOINT string = provider.outputs.foundryEndpoint
 output APIM_NAME string = provider.outputs.apimName
@@ -140,6 +155,9 @@ output CONNECTION_NAME string = consumers_.outputs.connectionName
 // Use this as the agent model: <connection-name>/<model-name>
 output AGENT_MODEL_DEPLOYMENT_NAME string = '${consumers_.outputs.connectionName}/${provider.outputs.modelName}'
 output CONSUMER_PROJECT_ENDPOINTS array = consumers_.outputs.projectEndpoints
+// Consumer Entra appids (managed-identity client ids) the gateway accepts; index 0 = B, 1 = C.
+// These are the values you revoke via the governance-proxy kill switch (App Config `revocations`).
+output CONSUMER_CLIENT_IDS array = identities.outputs.clientIds
 // Hosted (containerized) agents: shared registry + per-project ARM ids for the deploy hook.
 output CONSUMER_PROJECT_RESOURCE_IDS array = consumers_.outputs.projectResourceIds
 #disable-next-line BCP318 // guarded by enableHostedAgents; acr is deployed whenever this is read.
@@ -168,3 +186,33 @@ output MCP_ACR_LOGIN_SERVER string = enableMcp ? mcp.outputs.acrLoginServer : ''
 output MCP_APP_ID string = enableMcp ? mcp.outputs.appId : ''
 #disable-next-line BCP318
 output MCP_URI string = enableMcp ? mcp.outputs.uri : ''
+
+// The energy MCP server fronted by the APIM gateway (governance fragment applies): auth + kill switch.
+output MCP_GATEWAY_URL string = enableMcp ? '${provider.outputs.apimGatewayUrl}/${provider.outputs.mcpApiPath}/mcp' : ''
+
+// Governance proxy (optional, Phase 1): App Config store to write kills into, and the proxy
+// app the later image-swap hook targets.
+#disable-next-line BCP318 // guarded by enableProxy; the module is deployed whenever these are read.
+output PROXY_APP_CONFIG_NAME string = enableProxy ? proxy.outputs.appConfigName : ''
+#disable-next-line BCP318
+output PROXY_APP_CONFIG_ENDPOINT string = enableProxy ? proxy.outputs.appConfigEndpoint : ''
+// Phase 2 ingest: point Defender continuous export (as a trusted service) at this Event Hub.
+#disable-next-line BCP318
+output PROXY_EVENTHUB_NAMESPACE string = enableProxy ? proxy.outputs.eventHubNamespace : ''
+#disable-next-line BCP318
+output PROXY_EVENTHUB_NAME string = enableProxy ? proxy.outputs.eventHubName : ''
+#disable-next-line BCP318
+output PROXY_EVENTHUB_NAMESPACE_FQDN string = enableProxy ? proxy.outputs.eventHubNamespaceFqdn : ''
+#disable-next-line BCP318
+output PROXY_ACR_ID string = enableProxy ? proxy.outputs.acrId : ''
+#disable-next-line BCP318
+output PROXY_ACR_LOGIN_SERVER string = enableProxy ? proxy.outputs.acrLoginServer : ''
+#disable-next-line BCP318
+output PROXY_APP_ID string = enableProxy ? proxy.outputs.appId : ''
+#disable-next-line BCP318
+output PROXY_URI string = enableProxy ? proxy.outputs.uri : ''
+// Admin dashboard (event stream + revocations editor), second Container App in the proxy's env.
+#disable-next-line BCP318
+output PROXY_DASHBOARD_APP_ID string = enableProxy ? proxy.outputs.dashboardAppId : ''
+#disable-next-line BCP318
+output PROXY_DASHBOARD_URI string = enableProxy ? proxy.outputs.dashboardUri : ''

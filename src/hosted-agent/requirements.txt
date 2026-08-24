@@ -1,10 +1,13 @@
 # Pinned to the versions from the Foundry hosted-agents reference sample.
-# This agent uses no tools, but agent_framework_foundry_hosting._responses imports
-# `mcp` unconditionally at module load, so mcp is required even without MCP tools.
+# MCPStreamableHTTPTool (agent-framework-core) is the native MCP integration used by agent.py
+# to reach the energy MCP server through the APIM gateway; mcp is its transport dependency.
+# Pin mcp exactly: agent_framework_foundry_hosting does `from mcp import McpError`, which newer
+# mcp releases renamed to `MCPError` — a loose range crashes the container on startup. 1.27.2 is
+# the reference-sample version and satisfies agent-framework-core's mcp>=1.24.0,<2.
 agent-framework-core==1.7.0
 agent-framework-foundry==1.7.0
 agent-framework-foundry-hosting==1.0.0a260528
 azure-ai-agentserver-core==2.0.0b5
 azure-ai-agentserver-responses==1.0.0b7
-mcp>=1.0.0
+mcp==1.27.2
 azure-identity==1.25.3

@@ -1,0 +1,8 @@
+# uvicorn[standard] pulls in `websockets` — needed for the /ws live event stream.
+# pydantic pinned to v2 explicitly (see proxy/requirements.txt) so BaseModel bodies bind correctly.
+fastapi>=0.141
+uvicorn[standard]>=0.52
+pydantic>=2.13
+azure-appconfiguration>=1.9
+azure-identity>=1.25
+azure-eventhub>=5.15

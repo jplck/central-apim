@@ -32,3 +32,10 @@ if [ -n "${MCP_APP_ID:-}" ]; then
   # ENABLE_A365_MCP_REGISTER and non-fatal by default — see mcp_tools_a365.md.
   sh "$HOOK_DIR/register_mcp_a365.sh"
 fi
+
+# Governance proxy (proxy.md Phase 1): build src/proxy into its ACR, swap it onto the
+# container app, and arm the APIM kill-switch named value. Only when enableProxy provisioned
+# it (PROXY_APP_ID output set).
+if [ -n "${PROXY_APP_ID:-}" ]; then
+  python "$HOOK_DIR/deploy_proxy.py"
+fi
