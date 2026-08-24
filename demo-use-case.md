@@ -194,12 +194,37 @@ needs nothing new — it directly shows the coasting-token gap being closed.
 
 ### Phase 2 — automated Defender kill (Event Hub consumer)
 
-- Enable Defender for Cloud AI threat protection; **Continuous Export (alerts) → Event Hub**
-  (optionally Defender XDR **Streaming API → Event Hub** for `AlertInfo`).
-- A tiny **Event Hub-triggered consumer** (Container App job or Function, managed identity)
-  parses each alert, extracts the offending `appid` / blueprint id from the alert entities, and
-  set-adds it to `revocations` (idempotent). Reuse the proxy's App Config client code.
-- Result: Defender alert → revocation → gateway block with **no human in the loop**, in seconds.
+**Built.** `enableProxy` now also provisions a **keyless Event Hub** (`evhns-proxy-*` /
+`alerts`, `disableLocalAuth: true`, consumer group `ingestor`) and the governance proxy runs a
+**background consumer thread** (`src/proxy/server.py`) that reads alerts off it — keyless via the
+same managed identity — extracts the offending **appid** and set-adds it to `revocations`. No
+separate Function/job: the enforcer is also the ingestor, so it reuses the identity, image and
+App Config client (the proxy MI is now **App Configuration Data Owner** to write). Writes are
+idempotent and reflected in `state` immediately, not on the next poll.
+
+- The appid extractor is a **schema-agnostic recursive scan** for keys like `appId` /
+  `applicationId` / `aadClientId` (A365 / the SDK stamp the identity onto the model call, so
+  Defender copies it onto the alert). Override with the `ALERT_APPID_JSONPATH` env var if a real
+  alert nests it somewhere ambiguous.
+
+**One manual step — wire Defender export to the hub (keyless / trusted service):**
+
+```bash
+# Values from azd outputs:
+NS=$(azd env get-value PROXY_EVENTHUB_NAMESPACE)
+HUB=$(azd env get-value PROXY_EVENTHUB_NAME)
+# 1) Grant Defender for Cloud's identity Send on the namespace (trusted-service export; no SAS).
+#    In the portal continuous-export blade this is the "Export as a trusted service" toggle.
+#    Role: Azure Event Hubs Data Sender (2b629674-e913-4c01-ae53-ef4638d8f975).
+# 2) Defender for Cloud → Environment settings → <subscription> → Continuous export →
+#    Event Hub: destination = this namespace/hub, exported data = Security alerts.
+```
+
+- Ref: [Continuous export as a trusted service](https://techcommunity.microsoft.com/blog/microsoftdefendercloudblog/continuous-export-as-trusted-service-to-event-hub/3859983)
+  (grant **Azure Event Hubs Data Sender** to the Defender for Cloud identity — `disableLocalAuth`
+  leaves no SAS path, matching the no-access-keys rule).
+- Result: Defender alert → Event Hub → proxy consumer → revocation → gateway block with **no human
+  in the loop**, within the write + poll latency (seconds).
 
 ### Phase 3 — expansion (as needed)
 

@@ -23,6 +23,14 @@ KEY = os.environ.get("REVOCATIONS_KEY", "revocations")
 LABEL = os.environ.get("REVOCATIONS_LABEL") or None
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "10"))
 PORT = int(os.environ.get("PORT", "8080"))
+# Phase 2: Defender-alert ingest. When these are set, a background consumer reads AI alerts off the
+# Event Hub and revokes the offending appid — keyless, via the same user-assigned MI (AZURE_CLIENT_ID).
+EH_NAMESPACE = os.environ.get("EVENTHUB_FULLY_QUALIFIED_NAMESPACE", "")
+EH_NAME = os.environ.get("EVENTHUB_NAME", "")
+EH_CONSUMER_GROUP = os.environ.get("EVENTHUB_CONSUMER_GROUP", "$Default")
+# Candidate key names (normalized: lowercased, non-alphanumerics stripped) under which a Defender
+# alert may carry the offending agent's Entra appid.
+APPID_KEYS = {"appid", "applicationid", "clientid", "agentid", "aadclientid", "azp"}
 
 
 class _State:
@@ -95,6 +103,112 @@ def _poller() -> None:
         time.sleep(POLL_SECONDS)
 
 
+def extract_appid(alert: dict) -> str | None:
+    """Best-effort: pull the offending agent's Entra appid out of a Defender for Cloud alert.
+
+    ponytail: a recursive key scan over the alert JSON, not a fixed schema path — Defender alert
+    shapes vary and drift, and A365 / the SDK stamp the identity in different places. Set
+    ALERT_APPID_JSONPATH (dotted) to force a specific field if a real alert nests it ambiguously.
+    """
+    override = os.environ.get("ALERT_APPID_JSONPATH")
+    if override:
+        cur: object = alert
+        for part in override.split("."):
+            cur = cur.get(part) if isinstance(cur, dict) else None
+            if cur is None:
+                break
+        if isinstance(cur, str) and cur.strip():
+            return cur.strip()
+    stack: list = [alert]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for k, v in node.items():
+                key = "".join(ch for ch in k.lower() if ch.isalnum())
+                if isinstance(v, str) and v.strip() and key in APPID_KEYS:
+                    return v.strip()
+                if isinstance(v, (dict, list)):
+                    stack.append(v)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return None
+
+
+def add_revocation(client, appid: str) -> bool:
+    """Read-merge-write the revocations set (idempotent). Returns True if newly added. Needs App
+    Configuration Data Owner on the store."""
+    from azure.appconfiguration import ConfigurationSetting
+    from azure.core.exceptions import ResourceNotFoundError
+
+    try:
+        setting = client.get_configuration_setting(key=KEY, label=LABEL)
+        current = parse_revocations(setting.value)
+    except ResourceNotFoundError:
+        current = set()
+    if appid in current:
+        return False
+    current.add(appid)
+    client.set_configuration_setting(ConfigurationSetting(
+        key=KEY, label=LABEL, value=json.dumps(sorted(current)), content_type="application/json"))
+    return True
+
+
+def _handle_alert(appcfg, body: str) -> None:
+    """Parse one Event Hub payload (a single alert or a continuous-export {"records":[...]}) and
+    revoke every appid found. Never raises — a bad message must not kill the consumer."""
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return
+    records = payload.get("records", [payload]) if isinstance(payload, dict) else payload
+    for rec in records if isinstance(records, list) else [records]:
+        if not isinstance(rec, dict):
+            continue
+        appid = extract_appid(rec)
+        if not appid:
+            print("[proxy] alert with no extractable appid (set ALERT_APPID_JSONPATH?)", flush=True)
+            continue
+        try:
+            if add_revocation(appcfg, appid):
+                refresh(appcfg)  # reflect the kill in `state` now — don't wait for the next poll
+                print(f"[proxy] revoked {appid} from Defender alert", flush=True)
+        except Exception as e:
+            print(f"[proxy] revoke write failed for {appid}: {e}", flush=True)
+
+
+def _consumer() -> None:
+    """Stream Defender alerts off the Event Hub and revoke offending appids. Keyless MI.
+
+    ponytail: no checkpoint store, starts at @latest — a demo ingestor, not an exactly-once pipeline.
+    Add a Blob checkpoint store if you need replay across restarts.
+    """
+    from azure.eventhub import EventHubConsumerClient
+    from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+
+    cred = ManagedIdentityCredential(client_id=CLIENT_ID) if CLIENT_ID else DefaultAzureCredential()
+    appcfg = _client()
+    consumer = EventHubConsumerClient(
+        fully_qualified_namespace=EH_NAMESPACE,
+        eventhub_name=EH_NAME,
+        consumer_group=EH_CONSUMER_GROUP,
+        credential=cred,
+    )
+    with consumer:
+        consumer.receive(
+            on_event=lambda _ctx, event: event and _handle_alert(appcfg, event.body_as_str()),
+            starting_position="@latest",
+        )
+
+
+def _consumer_loop() -> None:
+    while True:
+        try:
+            _consumer()
+        except Exception as e:  # transient EH/AAD error — back off and reconnect, never exit
+            print(f"[proxy] event hub consumer error, retrying in 30s: {e}", flush=True)
+            time.sleep(30)
+
+
 def _make_app():
     from fastapi import FastAPI
     from pydantic import BaseModel
@@ -123,6 +237,9 @@ def _make_app():
             except Exception as e:
                 print(f"[proxy] initial load failed (fail-closed until it succeeds): {e}", flush=True)
         threading.Thread(target=_poller, daemon=True).start()
+        if EH_NAMESPACE and EH_NAME:
+            print(f"[proxy] Defender alert consumer on {EH_NAMESPACE}/{EH_NAME} ({EH_CONSUMER_GROUP})", flush=True)
+            threading.Thread(target=_consumer_loop, daemon=True).start()
 
     return app
 
@@ -141,6 +258,12 @@ def _selftest() -> None:
     assert decide("a", True, {"b"})[0] == "allow"
     # empty agent id is never matched as revoked
     assert decide("", True, {""})[0] == "allow"
+    # Phase 2: alert -> appid extraction (recursive, schema-agnostic)
+    assert extract_appid({"properties": {"extendedProperties": {"AppId": "guid-1"}}}) == "guid-1"
+    assert extract_appid({"a": {"b": [{"applicationId": "guid-2"}]}}) == "guid-2"
+    assert extract_appid({"entities": [{"Type": "user", "AadClientId": "guid-3"}]}) == "guid-3"
+    assert extract_appid({"azp": "guid-4"}) == "guid-4"
+    assert extract_appid({"nothing": "here", "count": 3}) is None
     print("self-test ok")
 
 

@@ -3,3 +3,5 @@ fastapi>=0.110
 uvicorn>=0.29
 azure-appconfiguration>=1.5
 azure-identity>=1.16
+# Phase 2: the proxy's consumer thread reads Defender alerts off the Event Hub, keyless via MI.
+azure-eventhub>=5.11

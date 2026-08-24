@@ -67,12 +67,14 @@ resource appconfig 'Microsoft.AppConfiguration/configurationStores@2023-03-01' =
   }
 }
 
-var appConfigDataReaderRoleId = '516239f1-63e1-4d78-a4de-a74fb236a071' // App Configuration Data Reader
-resource read 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+// The proxy READS revocations on its poll AND WRITES them when its Event Hub consumer ingests a
+// Defender alert (Phase 2), so its identity needs Data Owner (supersedes Reader). Same store,
+// same managed identity — the enforcer is also the ingestor. Keyless throughout.
+resource dataOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: appconfig
-  name: guid(appconfig.id, uami.id, appConfigDataReaderRoleId)
+  name: guid(appconfig.id, uami.id, appConfigDataOwnerRoleId)
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', appConfigDataReaderRoleId)
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', appConfigDataOwnerRoleId)
     principalId: uami.properties.principalId
     principalType: 'ServicePrincipal'
   }
@@ -86,6 +88,49 @@ resource ownerAssign 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', appConfigDataOwnerRoleId)
     principalId: deployerPrincipalId
+  }
+}
+
+// Phase 2 ingest lane. Defender for Cloud continuous export lands AI alerts in this Event Hub; the
+// proxy's consumer thread reads them (keyless, MI) and writes the offending appid into `revocations`.
+// disableLocalAuth => no SAS keys (matches the no-access-keys rule), so Defender must export "as a
+// trusted service": grant its identity Azure Event Hubs Data Sender on this namespace (a documented
+// post-deploy step — see demo-use-case.md Phase 2).
+var consumerGroupName = 'ingestor'
+resource ehNamespace 'Microsoft.EventHub/namespaces@2024-01-01' = {
+  name: 'evhns-proxy-${token}'
+  location: location
+  tags: tags
+  sku: { name: 'Standard', tier: 'Standard', capacity: 1 }
+  properties: {
+    disableLocalAuth: true
+    publicNetworkAccess: 'Enabled'
+    minimumTlsVersion: '1.2'
+  }
+}
+
+resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
+  parent: ehNamespace
+  name: 'alerts'
+  properties: {
+    messageRetentionInDays: 1
+    partitionCount: 1
+  }
+}
+
+resource consumerGroup 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2024-01-01' = {
+  parent: eventHub
+  name: consumerGroupName
+}
+
+var eventHubsDataReceiverRoleId = 'a638d3c7-ab3a-418d-83e6-5f17a39d4fde' // Azure Event Hubs Data Receiver
+resource ehReceiver 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: ehNamespace
+  name: guid(ehNamespace.id, uami.id, eventHubsDataReceiverRoleId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventHubsDataReceiverRoleId)
+    principalId: uami.properties.principalId
+    principalType: 'ServicePrincipal'
   }
 }
 
@@ -131,12 +176,16 @@ resource aca 'Microsoft.App/containerApps@2024-03-01' = {
         env: [
           { name: 'APP_CONFIG_ENDPOINT', value: appconfig.properties.endpoint }
           { name: 'AZURE_CLIENT_ID', value: uami.properties.clientId }
+          // Phase 2: presence of these turns on the proxy's Defender-alert consumer thread.
+          { name: 'EVENTHUB_FULLY_QUALIFIED_NAMESPACE', value: '${ehNamespace.name}.servicebus.windows.net' }
+          { name: 'EVENTHUB_NAME', value: eventHub.name }
+          { name: 'EVENTHUB_CONSUMER_GROUP', value: consumerGroupName }
         ]
       } ]
       scale: { minReplicas: 1, maxReplicas: 1 }
     }
   }
-  dependsOn: [ pull, read ]
+  dependsOn: [ pull, dataOwner, ehReceiver ]
 }
 
 output acrId string = acr.id
@@ -144,4 +193,7 @@ output acrLoginServer string = acr.properties.loginServer
 output appId string = aca.id
 output appConfigName string = appconfig.name
 output appConfigEndpoint string = appconfig.properties.endpoint
+output eventHubNamespace string = ehNamespace.name
+output eventHubName string = eventHub.name
+output eventHubNamespaceFqdn string = '${ehNamespace.name}.servicebus.windows.net'
 output uri string = 'https://${aca.properties.configuration.ingress.fqdn}'

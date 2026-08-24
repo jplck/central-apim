@@ -197,6 +197,13 @@ output MCP_GATEWAY_URL string = enableMcp ? '${provider.outputs.apimGatewayUrl}/
 output PROXY_APP_CONFIG_NAME string = enableProxy ? proxy.outputs.appConfigName : ''
 #disable-next-line BCP318
 output PROXY_APP_CONFIG_ENDPOINT string = enableProxy ? proxy.outputs.appConfigEndpoint : ''
+// Phase 2 ingest: point Defender continuous export (as a trusted service) at this Event Hub.
+#disable-next-line BCP318
+output PROXY_EVENTHUB_NAMESPACE string = enableProxy ? proxy.outputs.eventHubNamespace : ''
+#disable-next-line BCP318
+output PROXY_EVENTHUB_NAME string = enableProxy ? proxy.outputs.eventHubName : ''
+#disable-next-line BCP318
+output PROXY_EVENTHUB_NAMESPACE_FQDN string = enableProxy ? proxy.outputs.eventHubNamespaceFqdn : ''
 #disable-next-line BCP318
 output PROXY_ACR_ID string = enableProxy ? proxy.outputs.acrId : ''
 #disable-next-line BCP318
