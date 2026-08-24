@@ -1,7 +1,10 @@
 # Governance proxy (proxy.md Phase 1): FastAPI decision service on port 8080.
-fastapi>=0.110
-uvicorn>=0.29
-azure-appconfiguration>=1.5
-azure-identity>=1.16
+# pydantic pinned to v2 explicitly: an unpinned resolve pulled in pydantic v1, which makes
+# FastAPI treat the CheckReq body as a query param -> every /check 422s -> kill switch 403s.
+fastapi>=0.141
+uvicorn>=0.52
+pydantic>=2.13
+azure-appconfiguration>=1.9
+azure-identity>=1.25
 # Phase 2: the proxy's consumer thread reads Defender alerts off the Event Hub, keyless via MI.
-azure-eventhub>=5.11
+azure-eventhub>=5.15

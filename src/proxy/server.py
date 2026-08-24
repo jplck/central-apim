@@ -9,8 +9,9 @@ ponytail: the decision is a set-membership check, not an OPA/Rego engine. Rego +
 their place in Phase 3 (trust rings, rate limits, multi-dimensional policy); a kill switch
 does not need them. Upgrade path: swap `decide()` for an ACS/OPA call, same wire contract.
 """
-from __future__ import annotations
-
+# NOTE: no `from __future__ import annotations` — it stringizes annotations, and FastAPI can't
+# resolve the *locally* defined CheckReq body model (inside _make_app) from a string, so it
+# treats the body as a query param and every /check returns 422 -> kill switch fail-closes to 403.
 import json
 import os
 import sys

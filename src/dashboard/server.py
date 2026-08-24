@@ -14,8 +14,9 @@ Put it behind Container Apps auth (Easy Auth) or IP restrictions before using it
 ponytail: broadcast fan-out is in-process (per-connection asyncio.Queue), no Redis/pubsub — fine
 for one replica. Add a backplane only if the dashboard ever scales past minReplicas=1.
 """
-from __future__ import annotations
-
+# NOTE: no `from __future__ import annotations` — it stringizes annotations, and FastAPI can't
+# resolve the *locally* defined Ids body model (inside _make_app) from a string, so it treats the
+# body as a query param and /api/revocations PUT returns 422.
 import asyncio
 import collections
 import json
