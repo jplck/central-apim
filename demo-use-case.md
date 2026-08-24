@@ -226,6 +226,38 @@ HUB=$(azd env get-value PROXY_EVENTHUB_NAME)
 - Result: Defender alert → Event Hub → proxy consumer → revocation → gateway block with **no human
   in the loop**, within the write + poll latency (seconds).
 
+**Smoke-test the ingest lane (no Defender needed).** Inject one synthetic alert into the hub and
+watch the proxy revoke it — proves hub→consumer→App Config→block end to end:
+
+```bash
+NS=$(azd env get-value PROXY_EVENTHUB_NAMESPACE)
+HUB=$(azd env get-value PROXY_EVENTHUB_NAME)
+CFG=$(azd env get-value PROXY_APP_CONFIG_NAME)
+RG="rg-$(azd env get-value AZURE_ENV_NAME)-provider"
+NS_ID=$(az eventhubs namespace show -g "$RG" -n "$NS" --query id -o tsv)
+
+# One-time: let yourself send (keyless; this is the same role Defender needs for real).
+az role assignment create --assignee "$(az ad signed-in-user show --query id -o tsv)" \
+  --role "Azure Event Hubs Data Sender" --scope "$NS_ID"   # wait ~1-2 min for RBAC to propagate
+
+# Send a fake alert carrying a test appid (data-plane REST, AAD token, no SAS).
+TOKEN=$(az account get-access-token --resource https://eventhubs.azure.net --query accessToken -o tsv)
+curl -s -X POST "https://$NS.servicebus.windows.net/$HUB/messages?timeout=60&api-version=2014-01" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"properties":{"extendedProperties":{"AppId":"smoke-test-appid"}}}'
+
+# Verify: the appid shows up in revocations and /health within a few seconds.
+sleep 5
+az appconfig kv show -n "$CFG" --key revocations --auth-mode login --query value -o tsv   # ["smoke-test-appid"]
+curl -s "$(azd env get-value PROXY_URI)/health"                                           # revoked_count: 1
+
+# Clean up so the demo starts empty.
+az appconfig kv set -n "$CFG" --key revocations --value '[]' --yes --auth-mode login
+```
+
+The consumer starts at `@latest`, so send the test *after* the proxy is running (it is, post-deploy).
+Proxy log line to watch: `[proxy] revoked smoke-test-appid from Defender alert`.
+
 ### Phase 3 — expansion (as needed)
 
 - **Per-instance kill:** have the APIM policy also send `oid`; revoke at blueprint *or* instance
